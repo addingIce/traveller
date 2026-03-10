@@ -1,0 +1,33 @@
+version: '3.8'
+
+services:
+  zep:
+    image: getzep/zep:latest
+    ports:
+      - "8000:8000"
+    environment:
+      - ZEP_DB_DSN=postgres://zep:zep@db:5432/zep?sslmode=disable
+      - ZEP_NLP_OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ZEP_NLP_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - ZEP_AUTH_DEBUG=true # 开启调试
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: ankane/pgvector:latest # 使用 pgvector 镜像，因为 Zep 存储需要向量支持
+    environment:
+      - POSTGRES_USER=zep
+      - POSTGRES_PASSWORD=zep
+      - POSTGRES_DB=zep
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zep"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+networks:
+  default:
+    name: novel_network

@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>穿越者引擎 - 小说档案库</title>
+    <!-- 引入 Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
+    <style>
+      :root {
+        --bg-color: #0f172a;
+        --card-bg: rgba(30, 41, 59, 0.7);
+        --accent-color: #38bdf8;
+        --text-primary: #f1f5f9;
+        --text-secondary: #94a3b8;
+        --border-color: rgba(255, 255, 255, 0.1);
+      }
+
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: 'Outfit', 'Noto Sans SC', sans-serif;
+        background-color: var(--bg-color);
+        color: var(--text-primary);
+        line-height: 1.6;
+        min-height: 100vh;
+        overflow-x: hidden;
+      }
+
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+        padding: 2rem;
+      }
+
+      header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 3rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border-color);
+      }
+
+      .logo {
+        font-size: 1.8rem;
+        font-weight: 600;
+        background: linear-gradient(135deg, #38bdf8 0%, #818cf8 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        letter-spacing: -0.02em;
+      }
+
+      .dashboard {
+        display: grid;
+        grid-template-columns: 350px 1fr;
+        gap: 2rem;
+      }
+
+      .sidebar {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+      }
+
+      .card {
+        background: var(--card-bg);
+        backdrop-filter: blur(12px);
+        border: 1px solid var(--border-color);
+        border-radius: 1.25rem;
+        padding: 1.5rem;
+        box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      }
+
+      .card h2 {
+        font-size: 1.1rem;
+        font-weight: 600;
+        margin-bottom: 1.25rem;
+        color: var(--accent-color);
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .search-box {
+        position: relative;
+        margin-bottom: 1.5rem;
+      }
+
+      .search-box input {
+        width: 100%;
+        background: rgba(15, 23, 42, 0.5);
+        border: 1px solid var(--border-color);
+        border-radius: 0.75rem;
+        padding: 0.75rem 1rem;
+        color: white;
+        transition: all 0.3s;
+      }
+
+      .search-box input:focus {
+        outline: none;
+        border-color: var(--accent-color);
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.2);
+      }
+
+      .novel-list {
+        list-style: none;
+      }
+
+      .novel-item {
+        padding: 0.75rem;
+        border-radius: 0.5rem;
+        cursor: pointer;
+        transition: background 0.2s;
+        margin-bottom: 0.5rem;
+        border: 1px solid transparent;
+      }
+
+      .novel-item:hover {
+        background: rgba(56, 189, 248, 0.1);
+        border-color: rgba(56, 189, 248, 0.2);
+      }
+
+      .novel-item.active {
+        background: rgba(56, 189, 248, 0.2);
+        border-color: var(--accent-color);
+      }
+
+      .main-content {
+        display: flex;
+        flex-direction: column;
+        gap: 2rem;
+      }
+
+      #graph-container {
+        height: 600px;
+        background: rgba(15, 23, 42, 0.3);
+        border-radius: 1.25rem;
+        border: 1px solid var(--border-color);
+        position: relative;
+        overflow: hidden;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 1rem;
+      }
+
+      .stat-item {
+        background: rgba(30, 41, 59, 0.4);
+        padding: 1.25rem;
+        border-radius: 1rem;
+        border: 1px solid var(--border-color);
+        text-align: center;
+      }
+
+      .stat-value {
+        font-size: 1.5rem;
+        font-weight: 700;
+        color: var(--text-primary);
+      }
+
+      .stat-label {
+        font-size: 0.8rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 0.25rem;
+      }
+
+      .empty-state {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 100%;
+        color: var(--text-secondary);
+        text-align: center;
+      }
+
+      .loading-pulse {
+        width: 12px;
+        height: 12px;
+        background: var(--accent-color);
+        border-radius: 50%;
+        animation: pulse 1.5s infinite;
+      }
+
+      @keyframes pulse {
+        0% { transform: scale(0.95); opacity: 0.5; }
+        50% { transform: scale(1.1); opacity: 1; }
+        100% { transform: scale(0.95); opacity: 0.5; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <header>
+        <div class="logo">TRAVELLER ENGINE</div>
+        <div class="status-indicator" style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.85rem; color: var(--text-secondary);">
+          <div class="loading-pulse"></div>
+          ZEP 后端已连接
+        </div>
+      </header>
+
+      <div class="dashboard">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+          <div class="card">
+            <h2>作品档案库</h2>
+            <div class="search-box">
+              <input type="text" placeholder="搜索资源库..." />
+            </div>
+            <ul class="novel-list" id="novel-list">
+              <li class="novel-item active">
+                <div style="font-weight: 600;">test_novel</div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary);">昨日录入 · 1.2k 片段</div>
+              </li>
+              <li class="novel-item">
+                <div style="font-weight: 600;">哈利波特与魔法石</div>
+                <div style="font-size: 0.75rem; color: var(--text-secondary);">2小时前 · 0.8k 片段</div>
+              </li>
+            </ul>
+          </div>
+
+          <div class="card">
+            <h2>当前世界状态</h2>
+            <div class="stats-grid">
+              <div class="stat-item">
+                <div class="stat-value">42</div>
+                <div class="stat-label">实体角色</div>
+              </div>
+              <div class="stat-item">
+                <div class="stat-value">158</div>
+                <div class="stat-label">关联边</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 主展示区 -->
+        <div class="main-content">
+          <div class="card" style="padding: 0; overflow: hidden;">
+            <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center;">
+              <h2 style="margin-bottom: 0;">人物关系图谱 (Zep 实时生成)</h2>
+              <div style="font-size: 0.85rem; background: rgba(56, 189, 248, 0.1); color: var(--accent-color); padding: 0.25rem 0.75rem; border-radius: 100px;">
+                交互式推演模式
+              </div>
+            </div>
+            <div id="graph-container">
+              <div class="empty-state">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-bottom: 1rem; opacity: 0.5;">
+                  <circle cx="12" cy="12" r="10"></circle>
+                  <line x1="12" y1="16" x2="12" y2="12"></line>
+                  <line x1="12" y1="8" x2="12.01" y2="8"></line>
+                </svg>
+                <p>正在从 Zep 节点同步图谱数据...</p>
+                <p style="font-size: 0.8rem; margin-top: 0.5rem;">初次加载可能需要等待后端提取完成</p>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <h2>最近剧情记录 (Session Logs)</h2>
+            <div style="color: var(--text-secondary); font-size: 0.9rem;">
+                <div style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">
+                    <span style="color: var(--accent-color); font-weight: 600;">[旁白]</span> 你踏入破庙的瞬间，外面的雷声轰然炸响...
+                </div>
+                <div style="padding: 0.75rem; border-bottom: 1px solid var(--border-color);">
+                    <span style="color: #facc15; font-weight: 600;">[动作]</span> 拔出长剑，警惕地扫视四周。
+                </div>
+                <div style="padding: 0.75rem;">
+                    <span style="color: #6366f1; font-weight: 600;">[心理]</span> 这地方有古怪，林平之的味道还在破庙深处。
+                </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 预留逻辑入口 -->
+    <script>
+        console.log("Traveller Engine Frontend Initialized.");
+        // 后续将在这里对接 FastAPI 接口和 AntV G6 图谱渲染逻辑
+    </script>
+  </body>
+</html>
