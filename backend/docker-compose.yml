@@ -2,13 +2,14 @@ version: '3.8'
 
 services:
   zep:
-    image: getzep/zep:latest
+    image: zepai/zep:latest
     ports:
       - "8000:8000"
     environment:
       - ZEP_DB_DSN=postgres://zep:zep@db:5432/zep?sslmode=disable
       - ZEP_NLP_OPENAI_API_KEY=${OPENAI_API_KEY}
       - ZEP_NLP_OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - ZEP_NLP_OPENAI_MODEL=${MODEL_ZEP_EXTRACTOR}
       - ZEP_AUTH_DEBUG=true # 开启调试
     depends_on:
       db:

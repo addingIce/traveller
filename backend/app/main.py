@@ -15,6 +15,10 @@ ZEP_API_KEY = os.getenv("ZEP_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 
+# 分职责模型配置
+MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "gpt-4o")
+MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
+
 # 初始化 Zep 客户端
 zep_client = None
 
@@ -35,12 +39,16 @@ async def lifespan(app: FastAPI):
     if zep_client:
         await zep_client.close()
 
+from app.api.endpoints import api_router
+
 app = FastAPI(
     title="穿越者引擎 (Traveller Engine) API",
     version="0.1.0",
     description="基于 Zep 和 LLM 的小说解析与互动叙事引擎后端",
     lifespan=lifespan
 )
+
+app.include_router(api_router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
