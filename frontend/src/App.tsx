@@ -3,8 +3,24 @@ import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2 } from 'l
 import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse } from './api';
 
-// Generate a random session ID for the user's current session
-const sessionId = "session_" + Math.random().toString(36).substring(7);
+const SESSION_KEY = "traveller_session_id";
+
+const getSessionId = () => {
+    const params = new URLSearchParams(window.location.search);
+    const sidFromUrl = params.get("sid");
+    if (sidFromUrl) {
+        localStorage.setItem(SESSION_KEY, sidFromUrl);
+        return sidFromUrl;
+    }
+    const existing = localStorage.getItem(SESSION_KEY);
+    if (existing) return existing;
+    const newId = "session_" + Math.random().toString(36).substring(7);
+    localStorage.setItem(SESSION_KEY, newId);
+    return newId;
+};
+
+// Persisted session ID (supports cross-device resume via ?sid=xxx)
+const sessionId = getSessionId();
 
 const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'graph' | 'plot'>('plot');

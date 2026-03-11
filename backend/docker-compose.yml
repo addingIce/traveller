@@ -5,15 +5,51 @@ services:
     image: zepai/zep:latest
     ports:
       - "8000:8000"
+    volumes:
+      - ./zep.yaml:/app/zep.yaml
     environment:
-      - ZEP_DB_DSN=postgres://zep:zep@db:5432/zep?sslmode=disable
-      - ZEP_NLP_OPENAI_API_KEY=${OPENAI_API_KEY}
-      - ZEP_NLP_OPENAI_BASE_URL=${OPENAI_BASE_URL}
-      - ZEP_NLP_OPENAI_MODEL=${MODEL_ZEP_EXTRACTOR}
-      - ZEP_AUTH_DEBUG=true # 开启调试
+      - ZEP_NLP_OPENAI_API_KEY=sk-c264868eb9bee420aa14c3c376c32121
+      - ZEP_NLP_OPENAI_BASE_URL=https://apis.iflow.cn/v1
+      - ZEP_NLP_OPENAI_MODEL=deepseek-v3
     depends_on:
       db:
         condition: service_healthy
+      graphiti:
+        condition: service_started
+
+  neo4j:
+    image: neo4j:5-community
+    environment:
+      - NEO4J_AUTH=neo4j/password123
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+
+  graphiti:
+    image: zepai/graphiti:latest
+    environment:
+      - OPENAI_API_KEY=sk-c264868eb9bee420aa14c3c376c32121
+      - OPENAI_BASE_URL=https://apis.iflow.cn/v1
+      - MODEL_NAME=deepseek-v3
+      
+      # 专门为 Embedding 指定不同的 URL (如 ModelScope)
+      - EMBEDDING_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+      - EMBEDDING_OPENAI_API_KEY=sk-576e9b72d1c94041abbde994a614fd58
+      - EMBEDDING_MODEL_NAME=text-embedding-v4
+      - GRAPHITI_LLM_MAX_CONCURRENCY=1
+      - GRAPHITI_LLM_MIN_INTERVAL=0.5
+      
+      - NEO4J_URI=bolt://neo4j:7687
+      - NEO4J_USER=neo4j
+      - NEO4J_PASSWORD=password123
+    volumes:
+      - ./zep_graphiti.py:/app/graph_service/zep_graphiti.py
+      - ./ingest.py:/app/graph_service/routers/ingest.py
+      - ./graph_main.py:/app/graph_service/main.py
+    ports:
+      - "8003:8000"
+    depends_on:
+      - neo4j
 
   db:
     image: ankane/pgvector:latest # 使用 pgvector 镜像，因为 Zep 存储需要向量支持

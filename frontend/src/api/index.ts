@@ -26,7 +26,7 @@ export interface ChatResponse {
 }
 
 export const fetchKnowledgeGraph = async (collectionName: string) => {
-    const { data } = await apiClient.get(`/${collectionName}`);
+    const { data } = await apiClient.get(`/graph/${collectionName}`);
     return data;
 };
 

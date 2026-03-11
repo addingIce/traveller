@@ -1,21 +1,18 @@
 import os
 import json
-from fastapi import APIRouter, HTTPException
+import re
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from openai import AsyncOpenAI
-from zep_python import ZepClient
-from zep_python.memory import Message
+from zep_python import Message
 
 router = APIRouter()
-
-# 获取全局环境变量
-ZEP_API_URL = os.getenv("ZEP_API_URL", "http://localhost:8000")
-ZEP_API_KEY = os.getenv("ZEP_API_KEY", "")
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "gpt-4o")
+MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
 
 # 初始化 OpenAI Async 客户端
 aclient = AsyncOpenAI(
@@ -43,77 +40,142 @@ class ChatResponse(BaseModel):
     world_impact: WorldImpact
     ui_hints: List[str]
 
+def _try_json_loads(raw: str) -> Optional[Dict[str, Any]]:
+    try:
+        return json.loads(raw)
+    except Exception:
+        # 尝试从文本中提取最外层 JSON
+        match = re.search(r"\{.*\}", raw, re.DOTALL)
+        if not match:
+            return None
+        try:
+            return json.loads(match.group(0))
+        except Exception:
+            return None
+
+def _normalize_ai_data(data: Dict[str, Any], fallback_text: str) -> Dict[str, Any]:
+    return {
+        "story_text": data.get("story_text") or fallback_text,
+        "user_intent_summary": {
+            "action": (data.get("user_intent_summary") or {}).get("action"),
+            "dialogue": (data.get("user_intent_summary") or {}).get("dialogue"),
+            "thought": (data.get("user_intent_summary") or {}).get("thought"),
+        },
+        "world_impact": {
+            "world_state_changed": bool((data.get("world_impact") or {}).get("world_state_changed", False)),
+            "reason": (data.get("world_impact") or {}).get("reason"),
+        },
+        "ui_hints": data.get("ui_hints") or [],
+    }
+
+async def _repair_json(raw: str) -> Optional[Dict[str, Any]]:
+    try:
+        fix_prompt = (
+            "你是 JSON 修复器。仅输出合法 JSON 对象，不要输出解释或 Markdown。"
+        )
+        response = await aclient.chat.completions.create(
+            model=MODEL_PARSER,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": fix_prompt},
+                {"role": "user", "content": raw},
+            ],
+            temperature=0.0,
+            extra_body={"enable_thinking": False},
+        )
+        return _try_json_loads(response.choices[0].message.content or "")
+    except Exception:
+        return None
+
 @router.post("/interact", response_model=ChatResponse)
-async def chat_interact(req: ChatRequest):
+async def chat_interact(req: ChatRequest, request: Request):
     """
     核心 API: 与导演模型进行互动并获取多态解构数据。
     """
     try:
-        async with ZepClient(base_url=ZEP_API_URL, api_key=ZEP_API_KEY) as zep_client:
-            
-            # --- 1. 将玩家的输入推送到 Zep 记忆中 ---
-            user_message = Message(role="user", content=req.message)
-            await zep_client.memory.add_memory(req.session_id, [user_message])
-            
-            # --- 2. 尝试获取最近的记忆摘要和内容 ---
-            try:
-                memory = await zep_client.memory.get_memory(req.session_id)
-                history = "\n".join([f"{m.role}: {m.content}" for m in memory.messages])
-                summary = memory.summary.content if memory.summary else "暂无该时间线的摘要。"
-            except Exception:
-                history = ""
-                summary = "这是新的开始。"
+        client = request.app.state.zep
+        if client is None:
+            raise HTTPException(status_code=503, detail="Zep 服务未就绪")
+        
+        # --- 1. 将玩家的输入推送到 Zep 记忆中 ---
+        user_message = Message(role="user", role_type="user", content=req.message)
+        await client.memory.add(req.session_id, messages=[user_message])
+        
+        # --- 2. 尝试获取最近的记忆摘要和内容 ---
+        try:
+            memory = await client.memory.get(req.session_id)
+            history = "\n".join([f"{m.role}: {m.content}" for m in memory.messages]) if memory.messages else ""
+            summary = memory.summary.content if memory.summary else "暂无该时间线的摘要。"
+        except Exception as e:
+            print(f"Memory get failed: {e}")
+            history = ""
+            summary = "这是新的开始。"
                 
-            # --- 3. [可选] 获取该小说的宏观背景图谱 (为了简便我们在此示例中通过 collection 获取静态说明)
-            world_bible_prompt = f"你所在的世界发生于小说 {req.collection_name} 之内。请符合小说的逻辑设定。"
-            
-            # --- 4. 组装复杂的导演 Prompt (同步解构协议) ---
-            system_prompt = f"""
-            你是一位顶级小说家兼AI剧情推演导演（Director AI）。玩家处于第一人称视角。
-            
-            [当前世界背景]: {world_bible_prompt}
-            [本时间线之前的故事摘要]: {summary}
-            
-            请根据下面的近期交互历史，以及玩家最新一轮的动作进行推演。
-            请务必以合法的 JSON 格式进行响应输出。绝不能输出 markdown 代码块标记，只能输出纯 JSON 字符串。
-            
-            期望的 JSON 格式必须包含：
-            {{
-                "story_text": "由于玩家的动作，接下来发生的剧情文字描述（包含旁白、所有NPC的回应等），要富有文学性。",
-                "user_intent_summary": {{
-                    "action": "玩家刚刚动作的简短概括(如果是动作的话)",
-                    "dialogue": "玩家说了什么话(如果没有留空)",
-                    "thought": "玩家表达的心理暗示(如果没有留空)"
-                }},
-                "world_impact": {{
-                    "world_state_changed": true/false, // 玩家刚刚的行为是否足以产生长远的影响或者蝴蝶效应？
-                    "reason": "如果为true，简述为什么世界线发生变动了"
-                }},
-                "ui_hints": ["text_color_sky", "shake_screen"] // 为前端提供的特效提示数组，可随意留空
-            }}
-            """
-            
-            # --- 5. 呼叫大模型执行推理 ---
-            response = await aclient.chat.completions.create(
-                model=MODEL_DIRECTOR,
-                response_format={ "type": "json_object" }, # 强制使用结构化输出
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"互动历史:\n{history}\n\n[玩家最新一回合输入]: {req.message}"}
-                ],
-                temperature=0.7
-            )
-            
-            raw_json_str = response.choices[0].message.content
-            
-            # --- 6. 解析并包装返回结果 ---
-            ai_data = json.loads(raw_json_str)
-            
-            # 将导演 AI 生成的剧情也作为一条 Message 推回 Zep，方便下一轮记忆
-            ai_message = Message(role="assistant", content=ai_data.get("story_text", "……"))
-            await zep_client.memory.add_memory(req.session_id, [ai_message])
+        # --- 3. [可选] 获取该小说的宏观背景图谱 (为了简便我们在此示例中通过 collection 获取静态说明)
+        world_bible_prompt = f"你所在的世界发生于小说 {req.collection_name} 之内。请符合小说的逻辑设定。"
+        
+        # --- 4. 组装复杂的导演 Prompt (同步解构协议) ---
+        system_prompt = f"""
+        你是一位顶级小说家兼AI剧情推演导演（Director AI）。玩家处于第一人称视角。
+        
+        [当前世界背景]: {world_bible_prompt}
+        [本时间线之前的故事摘要]: {summary}
+        
+        请根据下面的近期交互历史，以及玩家最新一轮的动作进行推演。
+        请务必以合法的 JSON 格式进行响应输出。绝不能输出 markdown 代码块标记，只能输出纯 JSON 字符串。
+        
+        期望的 JSON 格式必须包含：
+        {{
+            "story_text": "由于玩家的动作，接下来发生的剧情文字描述（包含旁白、所有NPC的回应等），要富有文学性。",
+            "user_intent_summary": {{
+                "action": "玩家刚刚动作的简短概括(如果是动作的话)",
+                "dialogue": "玩家说了什么话(如果没有留空)",
+                "thought": "玩家表达的心理暗示(如果没有留空)"
+            }},
+            "world_impact": {{
+                "world_state_changed": true/false, // 玩家刚刚的行为是否足以产生长远的影响或者蝴蝶效应？
+                "reason": "如果为true，简述为什么世界线发生变动了"
+            }},
+            "ui_hints": ["text_color_sky", "shake_screen"] // 为前端提供的特效提示数组，可随意留空
+        }}
+        """
+        
+        # --- 5. 呼叫大模型执行推理 ---
+        response = await aclient.chat.completions.create(
+            model=MODEL_DIRECTOR,
+            response_format={ "type": "json_object" }, # 强制使用结构化输出
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": f"互动历史:\n{history}\n\n[玩家最新一回合输入]: {req.message}"}
+            ],
+            temperature=0.7,
+            extra_body={"enable_thinking": False}
+        )
+        
+        raw_json_str = response.choices[0].message.content or ""
+        
+        # --- 6. 解析并包装返回结果 ---
+        ai_data = _try_json_loads(raw_json_str)
+        if ai_data is None:
+            ai_data = await _repair_json(raw_json_str)
+        if ai_data is None:
+            ai_data = _normalize_ai_data({}, raw_json_str.strip() or "……")
+        else:
+            ai_data = _normalize_ai_data(ai_data, raw_json_str.strip() or "……")
+        
+        # 将导演 AI 生成的剧情也作为一条 Message 推回 Zep，方便下一轮记忆
+        ai_message = Message(role="assistant", role_type="assistant", content=ai_data.get("story_text", "……"))
+        await client.memory.add(req.session_id, messages=[ai_message])
+        
+        # 如果世界状态发生变动，标记图谱缓存为脏
+        if ai_data.get("world_impact", {}).get("world_state_changed"):
+            cache = request.app.state.graph_cache.get("items", {})
+            item = cache.get(req.collection_name) or {}
+            item["dirty"] = True
+            item["updated_at"] = item.get("updated_at") or 0
+            cache[req.collection_name] = item
 
-            return ChatResponse(**ai_data)
+        return ChatResponse(**ai_data)
 
     except Exception as e:
         print(f"Chat Interact Error: {str(e)}")

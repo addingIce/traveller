@@ -1,6 +1,6 @@
 fastapi
 uvicorn[standard]
-zep-python
+zep-python>=2.0.0
 openai
 python-dotenv
 sqlalchemy
