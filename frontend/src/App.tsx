@@ -145,6 +145,8 @@ const App: React.FC = () => {
         try {
             const results = await searchGraph('test_novel', searchInput);
             setSearchResults(results);
+            setNodeDetail(null); // 清除之前的节点详情，确保搜索结果列表能正常显示
+            setSelectedNodeId(null); // 清除选中的节点
             setActiveTab('graph'); // 自动跳转到图谱页查看
         } catch (e) {
             console.error("搜索失败", e);

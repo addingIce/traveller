@@ -215,11 +215,11 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
             # 1. 关键词/名称 匹配 (Cypher)
             cypher = """
             MATCH (n:Entity {group_id: $group_id})
-            WHERE n.name CONTAINS $query OR n.summary CONTAINS $query
+            WHERE n.name CONTAINS $search_query OR n.summary CONTAINS $search_query
             RETURN n.uuid as uuid, n.name as name, labels(n) as labels
             LIMIT 10
             """
-            result = await session.run(cypher, group_id=session_id, query=query or "")
+            result = await session.run(cypher, group_id=session_id, search_query=query or "")
             async for record in result:
                 results["nodes"].append({
                     "id": record["uuid"],
@@ -228,15 +228,29 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                 })
         
         # 2. 语义搜索 (通过 Zep 检索 Facts)
-        client = request.app.state.zep
-        if client and query:
-            # Zep 原生搜索其关联的 Facts
-            search_res = await client.memory.search(session_id, text=query, limit=5)
-            for fact in (search_res.facts or []):
-                results["facts"].append(fact.fact)
+        # 注意：Zep 服务当前存在连接问题，暂时禁用 facts 搜索
+        # 如果需要启用，请确保 Zep 服务正常运行并取消以下注释
+        # client = request.app.state.zep
+        # if client and query:
+        #     try:
+        #         # 获取 session 的 memory，包含相关 facts
+        #         memory = await client.memory.get(session_id)
+        #         # 简单的文本匹配过滤相关 facts
+        #         all_facts = memory.relevant_facts or []
+        #         query_lower = query.lower()
+        #         matching_facts = [
+        #             f.fact for f in all_facts 
+        #             if query_lower in f.fact.lower()
+        #         ]
+        #         results["facts"] = matching_facts[:5]  # 限制返回 5 个
+        #     except Exception as zep_error:
+        #         # Zep 搜索失败不影响 Neo4j 搜索结果
+        #         print(f"[WARNING] Zep search failed: {zep_error}")
 
     except Exception as e:
-        print(f"Search Error: {e}")
+        print(f"[ERROR] Search Error: {e}")
+        import traceback
+        traceback.print_exc()
     
     return results
 
