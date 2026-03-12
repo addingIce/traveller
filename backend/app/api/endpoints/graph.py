@@ -228,24 +228,22 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                 })
         
         # 2. 语义搜索 (通过 Zep 检索 Facts)
-        # 注意：Zep 服务当前存在连接问题，暂时禁用 facts 搜索
-        # 如果需要启用，请确保 Zep 服务正常运行并取消以下注释
-        # client = request.app.state.zep
-        # if client and query:
-        #     try:
-        #         # 获取 session 的 memory，包含相关 facts
-        #         memory = await client.memory.get(session_id)
-        #         # 简单的文本匹配过滤相关 facts
-        #         all_facts = memory.relevant_facts or []
-        #         query_lower = query.lower()
-        #         matching_facts = [
-        #             f.fact for f in all_facts 
-        #             if query_lower in f.fact.lower()
-        #         ]
-        #         results["facts"] = matching_facts[:5]  # 限制返回 5 个
-        #     except Exception as zep_error:
-        #         # Zep 搜索失败不影响 Neo4j 搜索结果
-        #         print(f"[WARNING] Zep search failed: {zep_error}")
+        client = request.app.state.zep
+        if client and query:
+            try:
+                # 获取 session 的 memory，包含相关 facts
+                memory = await client.memory.get(session_id)
+                # 简单的文本匹配过滤相关 facts
+                all_facts = memory.relevant_facts or []
+                query_lower = query.lower()
+                matching_facts = [
+                    f.fact for f in all_facts
+                    if query_lower in f.fact.lower()
+                ]
+                results["facts"] = matching_facts[:5]  # 限制返回 5 个
+            except Exception as zep_error:
+                # Zep 搜索失败不影响 Neo4j 搜索结果
+                print(f"[WARNING] Zep search failed: {zep_error}")
 
     except Exception as e:
         print(f"[ERROR] Search Error: {e}")
