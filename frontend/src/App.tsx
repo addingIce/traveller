@@ -43,7 +43,7 @@ const App: React.FC = () => {
     // Novel Management State
     const [novels, setNovels] = useState<NovelInfo[]>([]);
     const [isUploading, setIsUploading] = useState(false);
-    const [currentCollection, setCurrentCollection] = useState<string>('test_novel');
+    const [currentCollection, setCurrentCollection] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const graphContainer = useRef<HTMLDivElement>(null);
@@ -54,6 +54,31 @@ const App: React.FC = () => {
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [history]);
+
+    // Load novels list on component mount
+    useEffect(() => {
+        loadNovelsList();
+    }, []);
+
+    // Auto-select first completed novel when novels are loaded
+    useEffect(() => {
+        if (!currentCollection && novels.length > 0) {
+            const completedNovel = novels.find(n => n.status === 'completed');
+            if (completedNovel) {
+                setCurrentCollection(completedNovel.collection_name);
+            } else if (novels.length > 0) {
+                // If no completed novel, select the first one
+                setCurrentCollection(novels[0].collection_name);
+            }
+        }
+    }, [novels, currentCollection]);
+
+    // Load graph when currentCollection changes
+    useEffect(() => {
+        if (currentCollection && activeTab === 'graph') {
+            loadGraph();
+        }
+    }, [currentCollection, activeTab]);
 
     // Handle Tab Switch & Graph Load
     useEffect(() => {
@@ -67,6 +92,10 @@ const App: React.FC = () => {
     }, [activeTab]);
 
     const loadGraph = async () => {
+        if (!currentCollection) {
+            console.log("No collection selected, skipping graph load");
+            return;
+        }
         setIsGraphLoading(true);
         try {
             const data = await fetchKnowledgeGraph(currentCollection);

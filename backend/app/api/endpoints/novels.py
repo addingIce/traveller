@@ -253,21 +253,58 @@ async def upload_novel(
 async def get_novels_list(request: Request):
     """
     获取所有已上传的小说列表
+    从 Neo4j 中获取所有有数据的小说，并补充内存中的处理状态
     """
+    driver = getattr(request.app.state, "neo4j_driver", None)
     status_store = getattr(request.app.state, "processing_tasks", {})
     
     novels = []
-    for collection_name, task_info in status_store.items():
-        # 获取实际的消息数量（如果已完成）
-        chunks_count = task_info.get("chunks_processed", 0)
-        
-        novels.append(NovelInfo(
-            collection_name=collection_name,
-            title=task_info.get("title", collection_name),
-            status=task_info.get("status", "unknown"),
-            created_at=task_info.get("created_at", ""),
-            chunks_count=chunks_count
-        ))
+    
+    # 优先从 Neo4j 获取所有有数据的小说
+    if driver:
+        try:
+            async with driver.session() as session:
+                # 获取所有以 novel_ 开头的 group_id
+                query = """
+                MATCH (n:Entity)
+                WHERE n.group_id STARTS WITH 'novel_'
+                RETURN DISTINCT n.group_id as group_id, COUNT(n) as entity_count
+                ORDER BY group_id
+                """
+                result = await session.run(query)
+                neo4j_novels = {}
+                async for record in result:
+                    group_id = record["group_id"]
+                    entity_count = record["entity_count"]
+                    neo4j_novels[group_id] = entity_count
+                
+                # 从 Neo4j 的 group_id 构建小说列表
+                for group_id, entity_count in neo4j_novels.items():
+                    # 从 status_store 获取额外的元数据（如果有）
+                    task_info = status_store.get(group_id, {})
+                    
+                    novels.append(NovelInfo(
+                        collection_name=group_id,
+                        title=task_info.get("title", group_id),
+                        status=task_info.get("status", "completed"),  # 在 Neo4j 中的都视为已完成
+                        created_at=task_info.get("created_at", ""),
+                        chunks_count=task_info.get("chunks_processed", entity_count)  # 使用实体数量作为片段数量的近似值
+                    ))
+        except Exception as e:
+            print(f"[ERROR] Failed to get novels from Neo4j: {e}")
+    
+    # 如果 Neo4j 查询失败或没有数据，回退到使用 status_store
+    if not novels:
+        for collection_name, task_info in status_store.items():
+            chunks_count = task_info.get("chunks_processed", 0)
+            
+            novels.append(NovelInfo(
+                collection_name=collection_name,
+                title=task_info.get("title", collection_name),
+                status=task_info.get("status", "unknown"),
+                created_at=task_info.get("created_at", ""),
+                chunks_count=chunks_count
+            ))
     
     # 按创建时间倒序排列
     novels.sort(key=lambda x: x.created_at, reverse=True)

@@ -143,7 +143,11 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
     """
     获取指定小说的知识图谱 (节点和关系边缘)
     """
-    session_id = f"novel_{collection_name}"
+    # 检查 collection_name 是否已经以 novel_ 开头
+    if collection_name.startswith("novel_"):
+        session_id = collection_name
+    else:
+        session_id = f"novel_{collection_name}"
     try:
         # 0. 尝试从 Neo4j 直接拉取已持久化的实体和关系
         driver = getattr(request.app.state, "neo4j_driver", None)
@@ -180,6 +184,7 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
                     return {"nodes": nodes, "edges": edges}
 
         # 1. 如果 Neo4j 没数据，或者模式要求使用 facts 提取，备选走 Zep Facts 路径
+        client = getattr(request.app.state, "zep", None)
         if client is None:
             return {"nodes": [], "edges": []}
             

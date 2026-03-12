@@ -121,6 +121,37 @@ node_ops.extract_attributes_from_nodes = _hooked_attributes
 if hasattr(g_core, 'extract_attributes_from_nodes'):
     g_core.extract_attributes_from_nodes = _hooked_attributes
 
+# Fix TypeError: duplicate_fact_id 类型错误
+import graphiti_core.utils.maintenance.edge_operations as edge_ops
+_original_resolve_edge = edge_ops.resolve_extracted_edge
+async def _hooked_resolve_edge(*args, **kwargs):
+    """
+    包装 resolve_extracted_edge 函数，修复 duplicate_fact_id 类型问题。
+    确保 duplicate_fact_id 始终是整数而不是列表。
+    """
+    try:
+        result = await _original_resolve_edge(*args, **kwargs)
+        # result 是一个元组 (duplicate_fact_id, fact_type, contradicted_facts)
+        if isinstance(result, tuple) and len(result) > 0:
+            duplicate_fact_id = result[0]
+            # 如果 duplicate_fact_id 是列表，取第一个元素
+            if isinstance(duplicate_fact_id, list):
+                logger.warning(f"duplicate_fact_id is a list: {duplicate_fact_id}, extracting first element")
+                new_duplicate_fact_id = duplicate_fact_id[0] if duplicate_fact_id else -1
+                # 返回修复后的元组
+                return (new_duplicate_fact_id,) + result[1:]
+        return result
+    except TypeError as e:
+        # 如果仍然出现类型错误，尝试修复
+        if "'<=' not supported between instances of 'int' and 'list'" in str(e):
+            logger.error(f"TypeError in resolve_extracted_edge: {e}")
+            # 返回默认值避免崩溃
+            return (-1, "DEFAULT", [])
+        raise
+edge_ops.resolve_extracted_edge = _hooked_resolve_edge
+if hasattr(g_core, 'resolve_extracted_edge'):
+    g_core.resolve_extracted_edge = _hooked_resolve_edge
+
 _original_execute = neo4j.AsyncDriver.execute_query
 # GLOBAL MONKEY PATCH FOR EMBEDDER
 from graphiti_core.embedder.openai import OpenAIEmbedder
@@ -287,8 +318,12 @@ class ResilientOpenAIClient(OpenAIClient):
                             )
                             # ID 规则
                             id_rule = "\n\nCRITICAL ID RULE: Use the exact 'id' or 'entity_id' from the provided ENTITIES list. Do not use 1-based indexing if the list uses 0-based. Your project IDs must match the input IDs exactly."
+                            # entity_type_id 规则：修复 ValidationError
+                            entity_type_rule = "\n\nIMPORTANT FIELD RULE: Every entity object MUST include 'entity_type_id' field. For default Entity type, use entity_type_id=0. Never omit this field."
+                            # duplicate_fact_idx 规则：修复 TypeError
+                            duplicate_rule = "\n\nIMPORTANT FIELD RULE: The 'duplicate_fact_idx' field must ALWAYS be an integer (-1 if no duplicate). Never return a list for this field. Similarly, 'contradicted_facts' should be a list of integers, not nested lists."
                             
-                            combined_rules = lang_rule + id_rule
+                            combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule
                             
                             if hasattr(last_msg_obj, 'content'):
                                 last_msg_obj.content = last_msg + combined_rules
@@ -465,6 +500,34 @@ class ResilientOpenAIClient(OpenAIClient):
                     new_key = mapping[k]
                 
                 new_dict[new_key] = self.normalize_data(v)
+            
+            # 修复 ValidationError: entity_type_id 缺失
+            # 如果检测到实体对象但缺少 entity_type_id，自动添加默认值 0
+            if 'entity_id' in new_dict or 'name' in new_dict:
+                if 'entity_type_id' not in new_dict:
+                    logger.warning(f"Adding missing entity_type_id to entity: {new_dict.get('name', 'unknown')}")
+                    new_dict['entity_type_id'] = 0
+            
+            # 修复 TypeError: duplicate_fact_id 类型错误
+            # 如果 duplicate_fact_id 是列表，转换为整数
+            if 'duplicate_fact_id' in new_dict:
+                if isinstance(new_dict['duplicate_fact_id'], list):
+                    logger.warning(f"Converting duplicate_fact_id from list to int: {new_dict['duplicate_fact_id']}")
+                    new_dict['duplicate_fact_id'] = new_dict['duplicate_fact_id'][0] if new_dict['duplicate_fact_id'] else -1
+            
+            # 修复 contradicted_facts 类型错误
+            # 确保 contradicted_facts 是整数列表，不是嵌套列表
+            if 'contradicted_facts' in new_dict:
+                if isinstance(new_dict['contradicted_facts'], list):
+                    # 展平嵌套列表
+                    flattened = []
+                    for item in new_dict['contradicted_facts']:
+                        if isinstance(item, list):
+                            flattened.extend(item)
+                        else:
+                            flattened.append(item)
+                    new_dict['contradicted_facts'] = flattened
+            
             return new_dict
         return data
 
