@@ -208,7 +208,12 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
     """
     语义/关键词搜索节点和事实
     """
-    session_id = f"novel_{collection_name}"
+    # 检查 collection_name 是否已经以 novel_ 开头
+    if collection_name.startswith("novel_"):
+        session_id = collection_name
+    else:
+        session_id = f"novel_{collection_name}"
+    
     driver = getattr(request.app.state, "neo4j_driver", None)
     results = {"query": query, "nodes": [], "facts": []}
     

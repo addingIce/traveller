@@ -271,11 +271,11 @@ const App: React.FC = () => {
 
     const handleSearch = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!searchInput.trim()) return;
+        if (!searchInput.trim() || !currentCollection) return;
 
         setIsSearching(true);
         try {
-            const results = await searchGraph('test_novel', searchInput);
+            const results = await searchGraph(currentCollection, searchInput);
             setSearchResults(results);
             setNodeDetail(null); // 清除之前的节点详情，确保搜索结果列表能正常显示
             setSelectedNodeId(null); // 清除选中的节点
