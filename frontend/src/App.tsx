@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2 } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail } from './api';
+import { Search, Info, Target, MessageSquare } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
 
@@ -28,6 +29,13 @@ const App: React.FC = () => {
     const [isGraphLoading, setIsGraphLoading] = useState(false);
     const [chatInput, setChatInput] = useState("");
     const [isChatting, setIsChatting] = useState(false);
+    
+    // Search & Selection State
+    const [searchInput, setSearchInput] = useState("");
+    const [isSearching, setIsSearching] = useState(false);
+    const [searchResults, setSearchResults] = useState<{ nodes: any[], facts: string[] } | null>(null);
+    const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
+    const [nodeDetail, setNodeDetail] = useState<any | null>(null);
 
     // Custom type for generic message history inside the app UI
     const [history, setHistory] = useState<(ChatResponse & { type: 'ai' } | { type: 'user', content: string })[]>([]);
@@ -105,10 +113,74 @@ const App: React.FC = () => {
                 labelCfg: { autoRotate: true, style: { fill: '#94a3b8', fontSize: 10 } },
             },
             modes: { default: ['drag-canvas', 'zoom-canvas', 'drag-node'] },
+            nodeStateStyles: {
+                selected: {
+                    stroke: '#f8fafc',
+                    lineWidth: 4,
+                    fill: '#0ea5e9',
+                },
+            },
         });
 
         graphRef.current.data(data);
         graphRef.current.render();
+
+        // Add Listeners
+        graphRef.current.on('node:click', (e: any) => {
+            const id = e.item.getModel().id;
+            handleNodeClick(id as string);
+        });
+
+        graphRef.current.on('canvas:click', () => {
+            setSelectedNodeId(null);
+            setNodeDetail(null);
+        });
+    };
+
+    const handleSearch = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!searchInput.trim()) return;
+
+        setIsSearching(true);
+        try {
+            const results = await searchGraph('test_novel', searchInput);
+            setSearchResults(results);
+            setActiveTab('graph'); // 自动跳转到图谱页查看
+        } catch (e) {
+            console.error("搜索失败", e);
+        } finally {
+            setIsSearching(false);
+        }
+    };
+
+    const handleNodeClick = async (id: string) => {
+        setSelectedNodeId(id);
+        const detail = await fetchNodeDetail(id);
+        setNodeDetail(detail);
+
+        // Update graph styles to highlight
+        if (graphRef.current) {
+            const node = graphRef.current.findById(id);
+            if (node) {
+                // Clear all selected states
+                graphRef.current.getNodes().forEach((n: any) => {
+                    graphRef.current.setItemState(n, 'selected', false);
+                });
+                graphRef.current.setItemState(node, 'selected', true);
+            }
+        }
+    };
+
+    const locateNode = (id: string) => {
+        if (!graphRef.current) return;
+        const node = graphRef.current.findById(id);
+        if (node) {
+            graphRef.current.focusItem(node, true, {
+                easing: 'easeCubic',
+                duration: 500,
+            });
+            handleNodeClick(id);
+        }
     };
 
     const handleSendChat = async () => {
@@ -171,7 +243,82 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
-                        <h2 className="text-sky-400 font-semibold mb-4">当前世界统计</h2>
+                        <h2 className="text-sky-400 font-semibold mb-4 flex items-center gap-2">
+                            <Search className="w-4 h-4" /> 搜索世界实体
+                        </h2>
+                        <form onSubmit={handleSearch} className="relative mb-2">
+                            <input 
+                                type="text" 
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                                placeholder="搜角色 / 地点 / 设定..."
+                                className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-sky-500 transition-all pl-10"
+                            />
+                            <Search className="absolute left-3 top-3 w-4 h-4 text-slate-500" />
+                            {isSearching && <Loader2 className="absolute right-3 top-3 w-4 h-4 text-sky-500 animate-spin" />}
+                        </form>
+                        
+                        {/* Node Detail Dashboard */}
+                        {nodeDetail && (
+                            <div className="mt-4 p-4 bg-sky-500/5 border border-sky-500/20 rounded-xl animate-in fade-in zoom-in duration-300">
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[10px] font-bold text-sky-400 uppercase tracking-widest px-2 py-0.5 bg-sky-400/10 rounded border border-sky-400/20">{nodeDetail.type}</span>
+                                    <Info className="w-3 h-3 text-sky-400/50" />
+                                </div>
+                                <h3 className="text-lg font-bold text-white mb-2">{nodeDetail.label}</h3>
+                                <div className="text-[11px] text-slate-400 leading-relaxed font-serif max-h-40 overflow-y-auto custom-scrollbar">
+                                    {nodeDetail.summary || "Zep 正在通过背景分析该角色的深度设定..."}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Search Results List */}
+                        {searchResults && !nodeDetail && (
+                            <div className="mt-4 space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                                {searchResults.nodes.length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                            <Target className="w-3 h-3" /> 匹配到的逻辑实体
+                                        </div>
+                                        <div className="space-y-2">
+                                            {searchResults.nodes.map(node => (
+                                                <div 
+                                                    key={node.id} 
+                                                    onClick={() => locateNode(node.id)}
+                                                    className="flex items-center justify-between p-2.5 rounded-xl bg-white/5 border border-white/5 hover:border-sky-500/50 hover:bg-sky-500/5 cursor-pointer transition-all group"
+                                                >
+                                                    <span className="text-sm font-medium">{node.label}</span>
+                                                    <ChevronRight className="w-3 h-3 opacity-0 group-hover:opacity-100 text-sky-400 transition-all translate-x-[-4px] group-hover:translate-x-0" />
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {searchResults.facts.length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                            <MessageSquare className="w-3 h-3" /> 相关叙事事实
+                                        </div>
+                                        <div className="space-y-2">
+                                            {searchResults.facts.map((fact, i) => (
+                                                <div key={i} className="p-3 text-[11px] text-slate-400 bg-black/20 rounded-xl border border-white/5 italic leading-snug">
+                                                    “{fact}”
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {searchResults.nodes.length === 0 && searchResults.facts.length === 0 && (
+                                    <div className="text-center py-8 opacity-40">
+                                        <div className="text-xs">未探测到相关信息位</div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
+                        <h2 className="text-sky-400 font-semibold mb-4">世界设定统计</h2>
                         <div className="grid grid-cols-2 gap-4 text-center">
                             <div className="bg-white/5 p-4 rounded-xl border border-white/5">
                                 <div className="text-2xl font-bold">{graphData?.nodes?.length || 0}</div>

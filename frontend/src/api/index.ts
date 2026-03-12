@@ -30,6 +30,16 @@ export const fetchKnowledgeGraph = async (collectionName: string) => {
     return data;
 };
 
+export const searchGraph = async (collectionName: string, query: string) => {
+    const { data } = await apiClient.get(`/graph/${collectionName}/search`, { params: { query } });
+    return data;
+};
+
+export const fetchNodeDetail = async (uuid: string) => {
+    const { data } = await apiClient.get(`/graph/node/${uuid}`);
+    return data;
+};
+
 export const chatInteract = async (sessionId: string, collectionName: string, message: string): Promise<ChatResponse> => {
     const { data } = await apiClient.post('/chat/interact', {
         session_id: sessionId,

@@ -7,5 +7,23 @@
 }
 
 body {
-  @apply bg-slate-900 text-slate-100;
+  @apply bg-[#0f172a] text-slate-100;
+}
+
+/* Custom Scrollbar for Premium Feel */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 5px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  @apply bg-transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  @apply bg-slate-700/50 rounded-full hover:bg-sky-500/50 transition-colors;
+}
+
+/* AntV G6 Canvas container fix */
+.g6-tooltip {
+  @apply bg-slate-800 border border-white/10 p-2 rounded-lg text-xs shadow-2xl backdrop-blur-md !important;
 }
