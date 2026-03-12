@@ -4,6 +4,7 @@
 import os
 import time
 import asyncio
+import httpx
 from typing import List, Optional
 from datetime import datetime
 
@@ -14,6 +15,9 @@ from zep_python.client import AsyncZep
 from zep_python import Message
 
 router = APIRouter()
+
+# Graphiti API 配置
+GRAPHITI_API_URL = "http://localhost:8003"
 
 # ========== 数据模型 ==========
 
@@ -101,6 +105,7 @@ async def validate_upload_file(file: UploadFile) -> None:
 async def process_novel_task(
     collection_name: str,
     content: str,
+    novel_title: str,
     client: AsyncZep,
     status_store: dict
 ) -> None:
@@ -119,12 +124,16 @@ async def process_novel_task(
         
         # 创建或获取 Session
         try:
+            print(f"[DEBUG] Getting or creating session: {collection_name}")
             session = await client.memory.get_session(collection_name)
-        except Exception:
+            print(f"[DEBUG] Session found: {collection_name}")
+        except Exception as e:
+            print(f"[DEBUG] Session not found, creating new one: {e}")
             await client.memory.add_session(
                 session_id=collection_name,
-                metadata={"type": "novel_upload", "uploaded_at": datetime.utcnow().isoformat()}
+                metadata={"type": "novel_ingest", "source": novel_title}
             )
+            print(f"[DEBUG] Session created: {collection_name}")
         
         # 批量写入 Zep memory
         batch_size = 2
@@ -143,9 +152,12 @@ async def process_novel_task(
             retries = 3
             while retries > 0:
                 try:
+                    print(f"[DEBUG] Writing batch {i // batch_size + 1}/{(len(chunks) - 1) // batch_size + 1} to Zep...")
                     await client.memory.add(collection_name, messages=messages)
+                    print(f"[DEBUG] Batch {i // batch_size + 1} written successfully")
                     break
                 except Exception as e:
+                    print(f"[DEBUG] Batch {i // batch_size + 1} failed (retries left: {retries}): {e}")
                     retries -= 1
                     if retries == 0:
                         raise e
@@ -162,6 +174,9 @@ async def process_novel_task(
         # 更新状态：完成
         status_store[collection_name]["status"] = "completed"
         status_store[collection_name]["progress"] = 100.0
+        
+        # 注意：Graphiti 会由 Zep 自动触发，无需手动调用
+        # Zep 配置了 graphiti.service_url，会自动提取实体和关系
         
     except Exception as e:
         # 更新状态：失败
@@ -220,7 +235,7 @@ async def upload_novel(
     }
     
     # 启动异步处理任务
-    asyncio.create_task(process_novel_task(collection_name, text_content, client, status_store))
+    asyncio.create_task(process_novel_task(collection_name, text_content, novel_title, client, status_store))
     
     # 预估处理时间（基于文件大小）
     chunks_count = len([c for c in text_content.split("\n\n") if len(c.strip()) > 20])

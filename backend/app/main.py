@@ -30,8 +30,13 @@ async def lifespan(app: FastAPI):
     # 启动时执行
     print(f"正在连接 Zep 服务：{ZEP_API_URL}...")
     try:
-        # 在真实生产中这里会进行一次健康检查
-        app.state.zep = AsyncZep(base_url=ZEP_API_URL, api_key=ZEP_API_KEY)
+        # 创建 AsyncZep 客户端，增加超时配置
+        app.state.zep = AsyncZep(
+            base_url=ZEP_API_URL, 
+            api_key=ZEP_API_KEY,
+            # 增加超时时间（默认可能太短）
+            timeout=300.0  # 5分钟超时
+        )
         # 简易图谱缓存：按 collection 维护数据、脏标记和更新时间
         app.state.graph_cache = {
             "items": {},
