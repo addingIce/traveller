@@ -4,7 +4,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from openai import AsyncOpenAI
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 router = APIRouter()
 
@@ -21,6 +21,17 @@ aclient = AsyncOpenAI(
 class GraphResponse(BaseModel):
     nodes: List[Dict[str, Any]]
     edges: List[Dict[str, Any]]
+
+class SearchResult(BaseModel):
+    query: str
+    nodes: List[Dict[str, Any]]
+    facts: List[str] = []
+
+class NodeDetail(BaseModel):
+    id: str
+    label: str
+    type: str
+    summary: Optional[str] = None
 
 def _build_fact_nodes(facts: List[str]) -> List[Dict[str, Any]]:
     nodes = []
@@ -192,3 +203,67 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
         import traceback
         traceback.print_exc()
         return {"nodes": [], "edges": []}
+
+@router.get("/{collection_name}/search", response_model=SearchResult)
+async def search_graph_api(collection_name: str, query: str, request: Request):
+    """
+    语义/关键词搜索节点和事实
+    """
+    session_id = f"novel_{collection_name}"
+    driver = getattr(request.app.state, "neo4j_driver", None)
+    results = {"query": query, "nodes": [], "facts": []}
+    
+    if not driver:
+        return results
+
+    try:
+        async with driver.session() as session:
+            # 1. 关键词/名称 匹配 (Cypher)
+            cypher = """
+            MATCH (n:Entity {group_id: $group_id})
+            WHERE n.name CONTAINS $query OR n.summary CONTAINS $query
+            RETURN n.uuid as uuid, n.name as name, labels(n) as labels
+            LIMIT 10
+            """
+            result = await session.run(cypher, group_id=session_id, query=query or "")
+            async for record in result:
+                results["nodes"].append({
+                    "id": record["uuid"],
+                    "label": record["name"],
+                    "type": record["labels"][0] if record["labels"] else "concept"
+                })
+        
+        # 2. 语义搜索 (通过 Zep 检索 Facts)
+        client = request.app.state.zep
+        if client and query:
+            # Zep 原生搜索其关联的 Facts
+            search_res = await client.memory.search(session_id, text=query, limit=5)
+            for fact in (search_res.facts or []):
+                results["facts"].append(fact.fact)
+
+    except Exception as e:
+        print(f"Search Error: {e}")
+    
+    return results
+
+@router.get("/node/{uuid}", response_model=NodeDetail)
+async def get_node_detail(uuid: str, request: Request):
+    """
+    获取单个节点的详细属性，包括 AI 摘要
+    """
+    driver = getattr(request.app.state, "neo4j_driver", None)
+    if not driver:
+        raise HTTPException(status_code=503, detail="Database not ready")
+        
+    async with driver.session() as session:
+        query = "MATCH (n:Entity {uuid: $uuid}) RETURN n.uuid as id, n.name as label, n.summary as summary, labels(n)[0] as type"
+        result = await session.run(query, uuid=uuid)
+        record = await result.single()
+        if not record:
+            raise HTTPException(status_code=404, detail="Node not found")
+        return NodeDetail(
+            id=record["id"],
+            label=record["label"],
+            type=record["type"] or "Entity",
+            summary=record["summary"]
+        )
