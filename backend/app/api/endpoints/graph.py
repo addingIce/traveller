@@ -130,22 +130,52 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
     """
     获取指定小说的知识图谱 (节点和关系边缘)
     """
+    session_id = f"novel_{collection_name}"
     try:
+        # 0. 尝试从 Neo4j 直接拉取已持久化的实体和关系
+        driver = getattr(request.app.state, "neo4j_driver", None)
+        if driver:
+            async with driver.session() as session:
+                # 获取实体节点
+                node_query = "MATCH (n:Entity {group_id: $group_id}) RETURN n.uuid as uuid, n.name as name, labels(n) as labels"
+                node_result = await session.run(node_query, group_id=session_id)
+                nodes = []
+                async for record in node_result:
+                    nodes.append({
+                        "id": record["uuid"],
+                        "label": record["name"],
+                        "type": record["labels"][0] if record["labels"] else "concept"
+                    })
+                
+                # 获取关系边
+                edge_query = """
+                MATCH (n:Entity {group_id: $group_id})-[r:RELATES_TO]->(m:Entity {group_id: $group_id}) 
+                RETURN r.uuid as uuid, n.uuid as source, m.uuid as target, r.fact as fact, r.name as name
+                """
+                edge_result = await session.run(edge_query, group_id=session_id)
+                edges = []
+                async for record in edge_result:
+                    edges.append({
+                        "id": record["uuid"],
+                        "source": record["source"],
+                        "target": record["target"],
+                        "label": record["name"] or record["fact"] or "related"
+                    })
+                
+                if nodes:
+                    print(f"Graph retrieved from Neo4j for {session_id}: {len(nodes)} nodes, {len(edges)} edges")
+                    return {"nodes": nodes, "edges": edges}
+
+        # 1. 如果 Neo4j 没数据，或者模式要求使用 facts 提取，备选走 Zep Facts 路径
         client = request.app.state.zep
         if client is None:
-            raise HTTPException(status_code=503, detail="Zep 服务未就绪")
-        # 在 Zep CE v2 中，我们将 collection_name 映射为 session_id 来获取知识数据
-        session_id = f"novel_{collection_name}"
+            return {"nodes": [], "edges": []}
+            
         memory = await client.memory.get(session_id)
-        
         facts = [f.fact for f in (memory.relevant_facts or [])]
-        cache = request.app.state.graph_cache
-        items = cache.get("items", {})
-        now = int(time.time())
-        ttl = cache.get("ttl_seconds", 300)
-        cached = items.get(collection_name)
-        if cached and not cached.get("dirty") and (now - cached.get("updated_at", 0) < ttl):
-            return cached.get("data") or {"nodes": [], "edges": []}
+        
+        if not facts:
+            return {"nodes": [], "edges": []}
 
         if mode == "facts":
             graph = {"nodes": _build_fact_nodes(facts), "edges": []}
@@ -153,15 +183,10 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
             extracted = await _extract_graph_from_facts(facts)
             graph = _compose_graph(facts, extracted)
 
-        items[collection_name] = {
-            "data": graph,
-            "updated_at": now,
-            "dirty": False,
-        }
-
         return graph
             
     except Exception as e:
         print(f"Graph get Error: {str(e)}")
-        # 即使报错也返回空的，防止前端崩溃
+        import traceback
+        traceback.print_exc()
         return {"nodes": [], "edges": []}

@@ -1,0 +1,18 @@
+INFO:     Will watch for changes in these directories: ['/Users/a1-6/Projects/novel/backend']
+INFO:     Uvicorn running on http://0.0.0.0:8080 (Press CTRL+C to quit)
+INFO:     Started reloader process [39947] using WatchFiles
+INFO:     Started server process [39988]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+正在连接 Zep 服务：http://localhost:8000...
+Zep 服务初步连接成功！
+正在连接 Neo4j 服务：bolt://localhost:7687...
+Neo4j 服务连接成功！
+Graph retrieved from Neo4j for novel_test_novel: 5 nodes, 4 edges
+INFO:     127.0.0.1:54535 - "GET /api/v1/graph/test_novel HTTP/1.1" 200 OK
+Graph retrieved from Neo4j for novel_test_novel: 5 nodes, 4 edges
+INFO:     127.0.0.1:54556 - "GET /api/v1/graph/test_novel HTTP/1.1" 200 OK
+Chat Interact Error: Server disconnected without sending a response.
+INFO:     127.0.0.1:54599 - "POST /api/v1/chat/interact HTTP/1.1" 500 Internal Server Error
+Graph retrieved from Neo4j for novel_test_novel: 5 nodes, 4 edges
+INFO:     127.0.0.1:54628 - "GET /api/v1/graph/test_novel HTTP/1.1" 200 OK

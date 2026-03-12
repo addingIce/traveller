@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from dotenv import load_dotenv
 from zep_python.client import AsyncZep
+from neo4j import GraphDatabase, AsyncGraphDatabase
 
 # 加载环境变量
 load_dotenv()
@@ -19,6 +20,11 @@ OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "gpt-4o")
 MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
 
+# Neo4j 配置
+NEO4J_URI = os.getenv("NEO4J_URI", "bolt://localhost:7687")
+NEO4J_USER = os.getenv("NEO4J_USER", "neo4j")
+NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password123")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时执行
@@ -33,9 +39,17 @@ async def lifespan(app: FastAPI):
             "boot_time": int(time.time()),
         }
         print("Zep 服务初步连接成功！")
+        
+        # 初始化 Neo4j
+        print(f"正在连接 Neo4j 服务：{NEO4J_URI}...")
+        app.state.neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
+        await app.state.neo4j_driver.verify_connectivity()
+        print("Neo4j 服务连接成功！")
+
     except Exception as e:
-        print(f"Zep 服务连接失败警告: {str(e)}")
+        print(f"后端基础设施连接失败警告: {str(e)}")
         app.state.zep = None
+        app.state.neo4j_driver = None
         app.state.graph_cache = {
             "items": {},
             "ttl_seconds": 300,
@@ -45,6 +59,8 @@ async def lifespan(app: FastAPI):
     # 关闭时执行
     if getattr(app.state, "zep", None):
         await app.state.zep.close()
+    if getattr(app.state, "neo4j_driver", None):
+        await app.state.neo4j_driver.close()
 
 from app.api.endpoints import api_router
 
@@ -72,4 +88,4 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8080, reload=True)
