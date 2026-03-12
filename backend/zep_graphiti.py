@@ -275,17 +275,25 @@ class ResilientOpenAIClient(OpenAIClient):
                                 await asyncio.sleep(wait_time)
                             _last_llm_call = time.time()
 
-                        # 注入 ID 规则提醒
+                        # 注入 ID 规则与语言规则提醒
                         if messages and len(messages) > 0:
                             # Message 对象是 Pydantic 模型，使用属性访问
                             last_msg_obj = messages[-1]
                             last_msg = getattr(last_msg_obj, 'content', '') or ""
-                            if '<ENTITIES>' in last_msg or 'extracted entities' in last_msg.lower():
-                                if hasattr(last_msg_obj, 'content'):
-                                    last_msg_obj.content = last_msg + "\n\nCRITICAL ID RULE: Use the exact 'id' or 'entity_id' from the provided ENTITIES list. Do not use 1-based indexing if the list uses 0-based. Your project IDs must match the input IDs exactly."
-                                else:
-                                    # 如果是 dict 格式
-                                    messages[-1]['content'] = last_msg + "\n\nCRITICAL ID RULE: Use the exact 'id' or 'entity_id' from the provided ENTITIES list. Do not use 1-based indexing if the list uses 0-based. Your project IDs must match the input IDs exactly."
+                            # 增加语言一致性规则：强制使用原文语言（中文）
+                            lang_rule = (
+                                "\n\nLANGUAGE RULE: All output (names, relationship facts, descriptions) must use the SAME LANGUAGE as the input text. "
+                                "If the input is Chinese, your output must be Chinese. Do not use English relationship names like 'LIKES' or 'WORKS_AT' if the story is in Chinese."
+                            )
+                            # ID 规则
+                            id_rule = "\n\nCRITICAL ID RULE: Use the exact 'id' or 'entity_id' from the provided ENTITIES list. Do not use 1-based indexing if the list uses 0-based. Your project IDs must match the input IDs exactly."
+                            
+                            combined_rules = lang_rule + id_rule
+                            
+                            if hasattr(last_msg_obj, 'content'):
+                                last_msg_obj.content = last_msg + combined_rules
+                            else:
+                                messages[-1]['content'] = last_msg + combined_rules
 
                         response = await self._create_completion(
                             self.config.model,

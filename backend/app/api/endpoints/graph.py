@@ -43,6 +43,8 @@ async def _extract_graph_from_facts(facts: List[str]) -> Dict[str, Any]:
     fact_lines = "\n".join([f"[{i}] {f}" for i, f in enumerate(facts)])
     system_prompt = (
         "你是知识图谱抽取器。根据事实列表抽取实体与关系，输出严格 JSON 对象。"
+        "要求：所有输出内容（实体名、关系描述、类型名等）必须使用与原文完全一致的语言（中文）。"
+        "不要将中文翻译成英文，例如不要将'同学'翻译成'classmate'。"
         "实体包含 name 与 type（person/place/org/item/concept 之一）。"
         "关系包含 source/target/type 以及 evidence_fact_indexes（数组，引用事实索引）。"
         "仅输出 JSON，不要 Markdown。"

@@ -16,3 +16,66 @@ Chat Interact Error: Server disconnected without sending a response.
 INFO:     127.0.0.1:54599 - "POST /api/v1/chat/interact HTTP/1.1" 500 Internal Server Error
 Graph retrieved from Neo4j for novel_test_novel: 5 nodes, 4 edges
 INFO:     127.0.0.1:54628 - "GET /api/v1/graph/test_novel HTTP/1.1" 200 OK
+WARNING:  WatchFiles detected changes in 'zep_graphiti.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+ERROR:    Traceback (most recent call last):
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/starlette/routing.py", line 701, in lifespan
+    await receive()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/fastapi/routing.py", line 208, in merged_lifespan
+    yield {**(maybe_nested_state or {}), **(maybe_original_state or {})}
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/app/main.py", line 61, in lifespan
+    await app.state.zep.close()
+AttributeError: 'AsyncZep' object has no attribute 'close'
+
+ERROR:    Application shutdown failed. Exiting.
+INFO:     Finished server process [39988]
+INFO:     Started server process [40452]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'scripts/ingest_novel.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+ERROR:    Traceback (most recent call last):
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/starlette/routing.py", line 701, in lifespan
+    await receive()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/fastapi/routing.py", line 208, in merged_lifespan
+    yield {**(maybe_nested_state or {}), **(maybe_original_state or {})}
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/app/main.py", line 61, in lifespan
+    await app.state.zep.close()
+AttributeError: 'AsyncZep' object has no attribute 'close'
+
+ERROR:    Application shutdown failed. Exiting.
+INFO:     Finished server process [40452]
+INFO:     Started server process [40489]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+WARNING:  WatchFiles detected changes in 'app/api/endpoints/graph.py'. Reloading...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+ERROR:    Traceback (most recent call last):
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/starlette/routing.py", line 701, in lifespan
+    await receive()
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/venv/lib/python3.9/site-packages/fastapi/routing.py", line 208, in merged_lifespan
+    yield {**(maybe_nested_state or {}), **(maybe_original_state or {})}
+  File "/Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/contextlib.py", line 182, in __aexit__
+    await self.gen.__anext__()
+  File "/Users/a1-6/Projects/novel/backend/app/main.py", line 61, in lifespan
+    await app.state.zep.close()
+AttributeError: 'AsyncZep' object has no attribute 'close'
+
+ERROR:    Application shutdown failed. Exiting.
+INFO:     Finished server process [40489]
+INFO:     Started server process [40504]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
