@@ -40,7 +40,7 @@ async def ingest_novel(file_path: str, session_id: str):
         )
 
     # 2. 将小说片段逐批作为 Message 写入 Session Memory
-    batch_size = 5
+    batch_size = 2 # 进一步减小批次，防止 Zep 过载
     for i in range(0, len(chunks), batch_size):
         batch = chunks[i:i + batch_size]
         messages = [
@@ -51,10 +51,22 @@ async def ingest_novel(file_path: str, session_id: str):
             )
             for chunk in batch
         ]
-        await client.memory.add(session_id, messages=messages)
-        print(f"  ✅ 已写入批次 {i // batch_size + 1}/{(len(chunks) - 1) // batch_size + 1} ({len(batch)} 条消息)")
+        
+        retries = 3
+        while retries > 0:
+            try:
+                await client.memory.add(session_id, messages=messages)
+                print(f"  ✅ 已写入批次 {i // batch_size + 1}/{(len(chunks) - 1) // batch_size + 1} ({len(batch)} 条消息)")
+                await asyncio.sleep(2) # 强制休眠，给 Zep 后台处理缓冲时间
+                break
+            except Exception as e:
+                print(f"  ❌ 批次 {i // batch_size + 1} 写入失败: {e}. 正在重试 ({retries}/3)...")
+                retries -= 1
+                await asyncio.sleep(5)
+                if retries == 0:
+                    print(f"  🔥 批次 {i // batch_size + 1} 彻底失败，跳过。")
 
-    print(f"\n🎉 录入完成！共写入 {len(chunks)} 条叙事片段到 Session '{session_id}'。")
+    print(f"\n🎉 试图通过稳健模式录入完成。")
     print(f"Zep 将在后台自动提取 Facts（事实）和 Summary（摘要）。")
 
     # 3. 验证写入结果

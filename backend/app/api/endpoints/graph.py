@@ -180,23 +180,17 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
                     return {"nodes": nodes, "edges": edges}
 
         # 1. 如果 Neo4j 没数据，或者模式要求使用 facts 提取，备选走 Zep Facts 路径
-        client = request.app.state.zep
         if client is None:
             return {"nodes": [], "edges": []}
             
-        memory = await client.memory.get(session_id)
-        facts = [f.fact for f in (memory.relevant_facts or [])]
-        
-        if not facts:
-            return {"nodes": [], "edges": []}
-
+        # 如果 Neo4j 为空，且手动指定了 facts 模式，则走 Facts 路径（M0 保留逻辑）
         if mode == "facts":
-            graph = {"nodes": _build_fact_nodes(facts), "edges": []}
-        else:
-            extracted = await _extract_graph_from_facts(facts)
-            graph = _compose_graph(facts, extracted)
+            memory = await client.memory.get(session_id)
+            facts = [f.fact for f in (memory.relevant_facts or [])]
+            return {"nodes": _build_fact_nodes(facts), "edges": []}
 
-        return graph
+        # 默认不自动降级到 LLM 抽取，尊崇用户“物理图谱”一致性要求
+        return {"nodes": [], "edges": []}
             
     except Exception as e:
         print(f"Graph get Error: {str(e)}")

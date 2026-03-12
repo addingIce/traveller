@@ -3,6 +3,7 @@ version: '3.8'
 services:
   zep:
     image: zepai/zep:latest
+    restart: always
     ports:
       - "8000:8000"
     volumes:
@@ -14,8 +15,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-      graphiti:
-        condition: service_started
 
   neo4j:
     image: neo4j:5-community
@@ -50,6 +49,7 @@ services:
       - "8003:8000"
     depends_on:
       - neo4j
+      - zep
 
   db:
     image: ankane/pgvector:latest # 使用 pgvector 镜像，因为 Zep 存储需要向量支持
