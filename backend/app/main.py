@@ -40,6 +40,10 @@ async def lifespan(app: FastAPI):
         }
         print("Zep 服务初步连接成功！")
         
+        # 初始化小说处理任务状态存储
+        app.state.processing_tasks = {}
+        print("小说处理任务状态存储初始化完成！")
+        
         # 初始化 Neo4j
         print(f"正在连接 Neo4j 服务：{NEO4J_URI}...")
         app.state.neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
@@ -55,6 +59,7 @@ async def lifespan(app: FastAPI):
             "ttl_seconds": 300,
             "boot_time": int(time.time()),
         }
+        app.state.processing_tasks = {}
     yield
     # 关闭时执行
     if getattr(app.state, "zep", None):

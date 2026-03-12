@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2 } from 'lucide-react';
+import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel } from './api';
 import { Search, Info, Target, MessageSquare } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -40,6 +40,12 @@ const App: React.FC = () => {
     // Custom type for generic message history inside the app UI
     const [history, setHistory] = useState<(ChatResponse & { type: 'ai' } | { type: 'user', content: string })[]>([]);
 
+    // Novel Management State
+    const [novels, setNovels] = useState<NovelInfo[]>([]);
+    const [isUploading, setIsUploading] = useState(false);
+    const [currentCollection, setCurrentCollection] = useState<string>('test_novel');
+    const fileInputRef = useRef<HTMLInputElement>(null);
+
     const graphContainer = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -63,7 +69,7 @@ const App: React.FC = () => {
     const loadGraph = async () => {
         setIsGraphLoading(true);
         try {
-            const data = await fetchKnowledgeGraph('test_novel');
+            const data = await fetchKnowledgeGraph(currentCollection);
             setGraphData(data);
             if (activeTab === 'graph') renderGraph(data);
         } catch (e) {
@@ -72,6 +78,103 @@ const App: React.FC = () => {
             setIsGraphLoading(false);
         }
     };
+
+    // Novel Management Functions
+    const loadNovelsList = async () => {
+        try {
+            const data = await getNovelsList();
+            setNovels(data.novels);
+        } catch (e) {
+            console.error("加载小说列表失败", e);
+        }
+    };
+
+    const handleFileUpload = async (file: File) => {
+        // 验证文件
+        if (!file.name.endsWith('.txt')) {
+            alert('仅支持 .txt 文本文件');
+            return;
+        }
+        if (file.size > 10 * 1024 * 1024) {
+            alert('文件大小不能超过 10MB');
+            return;
+        }
+
+        setIsUploading(true);
+        try {
+            const response = await uploadNovel(file);
+            // 开始轮询状态
+            pollStatus(response.collection_name);
+            // 刷新小说列表
+            await loadNovelsList();
+        } catch (error) {
+            alert('上传失败');
+            console.error(error);
+        } finally {
+            setIsUploading(false);
+        }
+    };
+
+    const pollStatus = (collectionName: string) => {
+        const interval = setInterval(async () => {
+            try {
+                const status = await getNovelStatus(collectionName);
+                if (status.status !== 'processing') {
+                    clearInterval(interval);
+                    await loadNovelsList();
+                }
+            } catch (e) {
+                clearInterval(interval);
+            }
+        }, 3000);
+    };
+
+    const handleDeleteNovel = async (collectionName: string) => {
+        if (confirm('确定要删除这部小说吗？')) {
+            try {
+                await deleteNovel(collectionName);
+                await loadNovelsList();
+                // 如果删除的是当前小说，切换到第一个可用小说
+                if (currentCollection === collectionName) {
+                    const remaining = novels.filter(n => n.collection_name !== collectionName);
+                    if (remaining.length > 0) {
+                        setCurrentCollection(remaining[0].collection_name);
+                        loadGraph();
+                    }
+                }
+            } catch (e) {
+                alert('删除失败');
+                console.error(e);
+            }
+        }
+    };
+
+    const handleSelectNovel = (collectionName: string) => {
+        if (currentCollection === collectionName) return;
+        setCurrentCollection(collectionName);
+        setGraphData(null);
+        loadGraph();
+    };
+
+    const handleUploadClick = () => {
+        fileInputRef.current?.click();
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            handleFileUpload(file);
+        }
+        // 重置 input 以便可以再次选择同一个文件
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
+
+    // 初始化时加载小说列表
+    useEffect(() => {
+        loadNovelsList();
+    }, []);
 
     const renderGraph = (data: any) => {
         if (!graphContainer.current || data.nodes?.length === 0) return;
@@ -233,14 +336,76 @@ const App: React.FC = () => {
                 {/* Sidebar */}
                 <aside className="space-y-6 flex flex-col">
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
-                        <h2 className="text-sky-400 font-semibold mb-4 flex items-center gap-2">
-                            <History className="w-4 h-4" /> 作品档案库
-                        </h2>
-                        <div className="space-y-2">
-                            <div className="p-3 rounded-xl cursor-pointer transition-all border bg-sky-500/10 border-sky-500/50">
-                                <div className="font-medium">test_novel</div>
-                                <div className="text-xs text-sky-400/80 mt-1">当前互动世界</div>
-                            </div>
+                        <div className="flex justify-between items-center mb-4">
+                            <h2 className="text-sky-400 font-semibold flex items-center gap-2">
+                                <BookOpen className="w-4 h-4" /> 作品档案库
+                            </h2>
+                            <button
+                                onClick={handleUploadClick}
+                                disabled={isUploading}
+                                className="p-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="上传新小说"
+                            >
+                                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            </button>
+                        </div>
+                        <input
+                            ref={fileInputRef}
+                            type="file"
+                            accept=".txt"
+                            onChange={handleFileChange}
+                            className="hidden"
+                        />
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                            {novels.length === 0 && (
+                                <div className="text-center py-8 text-slate-500 text-sm">
+                                    <Upload className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                                    暂无小说，点击 + 上传
+                                </div>
+                            )}
+                            {novels.map((novel) => (
+                                <div
+                                    key={novel.collection_name}
+                                    className={`p-3 rounded-xl cursor-pointer transition-all border ${
+                                        currentCollection === novel.collection_name
+                                            ? 'bg-sky-500/10 border-sky-500/50'
+                                            : 'bg-white/5 border-white/5 hover:border-white/10'
+                                    }`}
+                                >
+                                    <div className="flex justify-between items-start">
+                                        <div className="flex-1 min-w-0" onClick={() => handleSelectNovel(novel.collection_name)}>
+                                            <div className="font-medium truncate">{novel.title}</div>
+                                            <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                                                <span className={
+                                                    novel.status === 'completed' ? 'text-emerald-400' :
+                                                    novel.status === 'processing' ? 'text-amber-400' :
+                                                    'text-red-400'
+                                                }>
+                                                    {novel.status === 'completed' ? '✓ 已完成' :
+                                                     novel.status === 'processing' ? '⏳ 处理中' :
+                                                     '✗ 失败'}
+                                                </span>
+                                                <span>• {novel.chunks_count} 个片段</span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                handleDeleteNovel(novel.collection_name);
+                                            }}
+                                            className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-all"
+                                            title="删除"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                    {novel.status === 'processing' && (
+                                        <div className="mt-2 w-full bg-black/30 rounded-full h-1">
+                                            <div className="bg-sky-500 h-1 rounded-full animate-pulse" style={{ width: '50%' }} />
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
                         </div>
                     </div>
 

@@ -48,3 +48,53 @@ export const chatInteract = async (sessionId: string, collectionName: string, me
     });
     return data;
 };
+
+// 小说管理相关接口和类型
+export interface NovelInfo {
+    collection_name: string;
+    title: string;
+    status: string;  // processing/completed/failed
+    created_at: string;
+    chunks_count: number;
+}
+
+export interface UploadResponse {
+    collection_name: string;
+    status: string;
+    message: string;
+    estimated_time?: number;
+}
+
+export interface ProcessStatusResponse {
+    collection_name: string;
+    status: string;
+    progress: number;
+    chunks_processed: number;
+    total_chunks: number;
+    error_message?: string;
+}
+
+export const uploadNovel = async (file: File, title?: string): Promise<UploadResponse> => {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (title) formData.append('title', title);
+    
+    const { data } = await apiClient.post('/novels/upload', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return data;
+};
+
+export const getNovelsList = async (): Promise<{ novels: NovelInfo[] }> => {
+    const { data } = await apiClient.get('/novels');
+    return data;
+};
+
+export const getNovelStatus = async (collectionName: string): Promise<ProcessStatusResponse> => {
+    const { data } = await apiClient.get(`/novels/${collectionName}/status`);
+    return data;
+};
+
+export const deleteNovel = async (collectionName: string): Promise<void> => {
+    await apiClient.delete(`/novels/${collectionName}`);
+};
