@@ -19,7 +19,7 @@ services:
   neo4j:
     image: neo4j:5-community
     environment:
-      - NEO4J_AUTH=${NEO4J_USER}:${NEO4J_PASSWORD}
+      - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
     ports:
       - "7474:7474"
       - "7687:7687"
