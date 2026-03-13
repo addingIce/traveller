@@ -160,7 +160,8 @@ async def process_novel_task(
     content: str,
     novel_title: str,
     client: AsyncZep,
-    status_store: dict
+    status_store: dict,
+    neo4j_driver = None
 ) -> None:
     """
     异步处理小说内容
@@ -169,6 +170,31 @@ async def process_novel_task(
     try:
         # 更新状态：开始处理
         status_store[collection_name]["status"] = "processing"
+        
+        # 在 Neo4j 中创建 Novel 节点，存储小说元数据
+        if neo4j_driver:
+            try:
+                async with neo4j_driver.session() as session:
+                    # 创建 Novel 节点（如果不存在）
+                    create_novel_query = """
+                    MERGE (n:Novel {collection_name: $collection_name})
+                    ON CREATE SET 
+                        n.title = $title,
+                        n.created_at = $created_at,
+                        n.status = 'processing'
+                    ON MATCH SET 
+                        n.status = 'processing'
+                    RETURN n
+                    """
+                    await session.run(
+                        create_novel_query,
+                        collection_name=collection_name,
+                        title=novel_title,
+                        created_at=status_store[collection_name]["created_at"]
+                    )
+                    print(f"[INFO] Created/Updated Novel node: {collection_name}")
+            except Exception as e:
+                print(f"[ERROR] Failed to create Novel node: {e}")
         
         # 使用智能分段策略
         chunks = smart_chunk_content(content, min_length=100, max_length=500)
@@ -228,6 +254,20 @@ async def process_novel_task(
         status_store[collection_name]["status"] = "completed"
         status_store[collection_name]["progress"] = 100.0
         
+        # 更新 Neo4j 中 Novel 节点的状态
+        if neo4j_driver:
+            try:
+                async with neo4j_driver.session() as session:
+                    update_novel_query = """
+                    MATCH (n:Novel {collection_name: $collection_name})
+                    SET n.status = 'completed'
+                    RETURN n
+                    """
+                    await session.run(update_novel_query, collection_name=collection_name)
+                    print(f"[INFO] Updated Novel node status to 'completed': {collection_name}")
+            except Exception as e:
+                print(f"[ERROR] Failed to update Novel node status: {e}")
+        
         # 注意：Graphiti 会由 Zep 自动触发，无需手动调用
         # Zep 配置了 graphiti.service_url，会自动提取实体和关系
         
@@ -263,6 +303,9 @@ async def upload_novel(
     # 获取状态存储
     status_store = getattr(request.app.state, "processing_tasks", {})
     
+    # 获取 Neo4j 驱动
+    neo4j_driver = getattr(request.app.state, "neo4j_driver", None)
+    
     # 验证文件
     await validate_upload_file(file)
     
@@ -288,7 +331,7 @@ async def upload_novel(
     }
     
     # 启动异步处理任务
-    asyncio.create_task(process_novel_task(collection_name, text_content, novel_title, client, status_store))
+    asyncio.create_task(process_novel_task(collection_name, text_content, novel_title, client, status_store, neo4j_driver))
     
     # 预估处理时间（基于文件大小）
     chunks_count = len([c for c in text_content.split("\n\n") if len(c.strip()) > 20])
@@ -317,31 +360,63 @@ async def get_novels_list(request: Request):
     if driver:
         try:
             async with driver.session() as session:
-                # 获取所有以 novel_ 开头的 group_id
-                query = """
-                MATCH (n:Entity)
-                WHERE n.group_id STARTS WITH 'novel_'
-                RETURN DISTINCT n.group_id as group_id, COUNT(n) as entity_count
-                ORDER BY group_id
+                # 获取所有 Novel 节点，以及每个小说的实体数量
+                novel_query = """
+                MATCH (novel:Novel)
+                OPTIONAL MATCH (entity:Entity {group_id: novel.collection_name})
+                WITH novel, COUNT(DISTINCT entity) as entity_count
+                ORDER BY novel.created_at DESC
+                RETURN novel.collection_name as collection_name, 
+                       novel.title as title, 
+                       novel.created_at as created_at,
+                       novel.status as novel_status,
+                       entity_count
                 """
-                result = await session.run(query)
-                neo4j_novels = {}
+                result = await session.run(novel_query)
+                novel_collections = set()
                 async for record in result:
-                    group_id = record["group_id"]
+                    collection_name = record["collection_name"]
+                    novel_title = record["title"] or collection_name
+                    created_at = record["created_at"] or ""
+                    novel_status = record["novel_status"] or "completed"
                     entity_count = record["entity_count"]
-                    neo4j_novels[group_id] = entity_count
-                
-                # 从 Neo4j 的 group_id 构建小说列表
-                for group_id, entity_count in neo4j_novels.items():
-                    # 从 status_store 获取额外的元数据（如果有）
-                    task_info = status_store.get(group_id, {})
+                    novel_collections.add(collection_name)
+                    
+                    # 从 status_store 获取实时状态（如果在处理中）
+                    task_info = status_store.get(collection_name, {})
+                    status = task_info.get("status", novel_status)
+                    chunks_count = task_info.get("chunks_processed", entity_count)
                     
                     novels.append(NovelInfo(
-                        collection_name=group_id,
-                        title=task_info.get("title", group_id),
-                        status=task_info.get("status", "completed"),  # 在 Neo4j 中的都视为已完成
+                        collection_name=collection_name,
+                        title=novel_title,
+                        status=status,
+                        created_at=created_at,
+                        chunks_count=chunks_count
+                    ))
+                
+                # 获取没有 Novel 节点的旧小说（只有 Entity 节点）
+                old_novels_query = """
+                MATCH (e:Entity)
+                WHERE e.group_id STARTS WITH 'novel_' 
+                  AND NOT EXISTS((:Novel {collection_name: e.group_id}))
+                RETURN DISTINCT e.group_id as group_id, COUNT(e) as entity_count
+                ORDER BY group_id
+                """
+                result = await session.run(old_novels_query)
+                async for record in result:
+                    collection_name = record["group_id"]
+                    entity_count = record["entity_count"]
+                    
+                    # 从 status_store 获取额外的元数据（如果有）
+                    task_info = status_store.get(collection_name, {})
+                    
+                    novels.append(NovelInfo(
+                        collection_name=collection_name,
+                        title=task_info.get("title", collection_name),  # 使用 collection_name 作为标题
+                        status=task_info.get("status", "completed"),
                         created_at=task_info.get("created_at", ""),
-                        chunks_count=task_info.get("chunks_processed", entity_count)  # 使用实体数量作为片段数量的近似值
+                        chunks_count=entity_count
                     ))
         except Exception as e:
             print(f"[ERROR] Failed to get novels from Neo4j: {e}")
@@ -397,6 +472,7 @@ async def delete_novel(collection_name: str, request: Request):
     """
     status_store = getattr(request.app.state, "processing_tasks", {})
     client = getattr(request.app.state, "zep", None)
+    driver = getattr(request.app.state, "neo4j_driver", None)
     
     if not client:
         raise HTTPException(
@@ -404,19 +480,117 @@ async def delete_novel(collection_name: str, request: Request):
             detail="Zep 服务未就绪"
         )
     
-    # 从状态存储中移除
-    if collection_name in status_store:
-        del status_store[collection_name]
+    deleted_entities = 0
+    deleted_relationships = 0
+    errors = []
     
-    # 注意：Zep Python SDK 可能没有直接的删除 session API
-    # 这里只是从状态存储中移除，实际数据保留
-    # 未来如果需要完全删除，可能需要调用 Zep 的 HTTP API 或手动清理数据库
-    
-    # 注意：Neo4j 中的实体需要手动清理，这里暂不实现
-    # 未来可以添加清理 Neo4j 数据的逻辑
-    
-    return DeleteResponse(
-        collection_name=collection_name,
-        success=True,
-        message="小说已从列表中移除（注意：Zep 和 Neo4j 中的数据仍保留）"
-    )
+    try:
+        # 1. 删除 Neo4j 中的实体和关系
+        if driver:
+            try:
+                async with driver.session() as driver_session:
+                    # 第一步：删除所有 Entity 节点的关系（包括 outgoing 和 incoming）
+                    # 使用 DETACH DELETE 删除关系但不删除目标节点
+                    edge_query = """
+                    MATCH (n:Entity {group_id: $group_id})-[r]-(m)
+                    DETACH DELETE r
+                    RETURN count(r) as deleted
+                    """
+                    edge_result = await driver_session.run(edge_query, group_id=collection_name)
+                    edge_record = await edge_result.single()
+                    if edge_record:
+                        deleted_relationships = edge_record["deleted"]
+                    
+                    # 第二步：删除所有 Entity 节点
+                    node_query = """
+                    MATCH (n:Entity {group_id: $group_id})
+                    DELETE n
+                    RETURN count(n) as deleted
+                    """
+                    node_result = await driver_session.run(node_query, group_id=collection_name)
+                    node_record = await node_result.single()
+                    if node_record:
+                        deleted_entities = node_record["deleted"]
+                    
+                    # 第三步：删除 Novel 节点
+                    novel_query = """
+                    MATCH (n:Novel {collection_name: $collection_name})
+                    DELETE n
+                    RETURN count(n) as deleted
+                    """
+                    novel_result = await driver_session.run(novel_query, collection_name=collection_name)
+                    novel_record = await novel_result.single()
+                    if novel_record:
+                        print(f"[INFO] 删除了 {novel_record['deleted']} 个 Novel 节点")
+                    
+                    # 第四步：清理孤立的 Episodic 节点（没有 Entity 连接的）
+                    orphan_episodic_query = """
+                    MATCH (e:Episodic)
+                    WHERE NOT (e)-[]-(:Entity)
+                    DELETE e
+                    RETURN count(e) as deleted
+                    """
+                    orphan_result = await driver_session.run(orphan_episodic_query)
+                    orphan_record = await orphan_result.single()
+                    if orphan_record and orphan_record["deleted"] > 0:
+                        print(f"[INFO] 清理了 {orphan_record['deleted']} 个孤立的 Episodic 节点")
+                        
+            except Exception as e:
+                error_msg = f"Neo4j 删除失败: {str(e)}"
+                errors.append(error_msg)
+                print(f"[ERROR] {error_msg}")
+        
+        # 2. 尝试删除 Zep session（如果 API 支持）
+        try:
+            # Zep Python SDK 可能没有直接的删除方法
+            # 这里尝试使用 HTTP API 删除 session
+            import httpx
+            zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
+            async with httpx.AsyncClient() as http_client:
+                # 尝试删除 session
+                response = await http_client.delete(
+                    f"{zep_api_url}/sessions/{collection_name}"
+                )
+                if response.status_code == 200 or response.status_code == 204:
+                    print(f"[INFO] Zep session {collection_name} 已删除")
+                elif response.status_code == 404:
+                    print(f"[INFO] Zep session {collection_name} 不存在")
+                else:
+                    print(f"[WARNING] Zep session 删除失败: {response.status_code}")
+        except Exception as e:
+            error_msg = f"Zep session 删除失败: {str(e)}"
+            errors.append(error_msg)
+            print(f"[WARNING] {error_msg}")
+        
+        # 3. 从状态存储中移除
+        if collection_name in status_store:
+            del status_store[collection_name]
+        
+        # 构建响应消息
+        message_parts = []
+        if deleted_entities > 0:
+            message_parts.append(f"删除了 {deleted_entities} 个实体")
+        if deleted_relationships > 0:
+            message_parts.append(f"删除了 {deleted_relationships} 个关系")
+        
+        if errors:
+            if message_parts:
+                message_parts.append(f"(部分删除失败)")
+            else:
+                message_parts.append("删除失败")
+        else:
+            if not message_parts:
+                message_parts.append("删除成功")
+        
+        return DeleteResponse(
+            collection_name=collection_name,
+            success=len(errors) == 0,
+            message="、".join(message_parts)
+        )
+        
+    except Exception as e:
+        return DeleteResponse(
+            collection_name=collection_name,
+            success=False,
+            message=f"删除失败: {str(e)}"
+        )
