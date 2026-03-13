@@ -222,7 +222,7 @@ const loadGraph = async () => {
         if (currentCollection === collectionName) return;
         setCurrentCollection(collectionName);
         clearGraph();  // 清理旧图谱
-        loadGraph();
+        // 不再直接调用 loadGraph()，让 useEffect 自动处理 currentCollection 变化
     };
 
     const handleUploadClick = () => {
