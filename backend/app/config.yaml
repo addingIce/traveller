@@ -1,20 +1,20 @@
 api:
-  embedding_api_key: test_embedding_key_456
-  embedding_base_url: https://embedding.test.com/v1
-  embedding_model: test-embedding-model
-  llm_api_key: test_key_123
-  llm_base_url: https://api.test.com/v1
-  llm_model: test-model
+  embedding_api_key: correct_embedding_key_666
+  embedding_base_url: https://correct-embedding.test.com/v1
+  embedding_model: correct-embedding-model
+  llm_api_key: correct_test_key_777
+  llm_base_url: https://correct-api.test.com/v1
+  llm_model: correct-test-model
 business:
-  chunk_max_length: 600
-  chunk_min_length: 120
-  max_file_size_mb: 15
-  neo4j_timeout: 40
-  zep_timeout: 360
+  chunk_max_length: 1000
+  chunk_min_length: 250
+  max_file_size_mb: 50
+  neo4j_timeout: 90
+  zep_timeout: 600
 performance:
-  batch_delay: 0.8
-  batch_size: 3
-  graphiti_llm_max_concurrency: 2
-  graphiti_llm_min_interval: 0.3
-  poll_interval: 3
-  status_poll_interval: 2
+  batch_delay: 0.2
+  batch_size: 8
+  graphiti_llm_max_concurrency: 15
+  graphiti_llm_min_interval: 0.05
+  poll_interval: 2
+  status_poll_interval: 1

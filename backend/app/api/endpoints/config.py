@@ -9,8 +9,8 @@ router = APIRouter()
 
 # 配置文件路径
 CONFIG_FILE = Path(__file__).parent.parent.parent / "config.yaml"
-DOCKER_COMPOSE_FILE = Path(__file__).parent.parent.parent / "docker-compose.yml"
-ENV_FILE = Path(__file__).parent.parent.parent / ".env"
+DOCKER_COMPOSE_FILE = Path(__file__).parent.parent.parent.parent / "docker-compose.yml"
+ENV_FILE = Path(__file__).parent.parent.parent.parent / ".env"
 
 # 配置数据模型
 class PerformanceConfig(BaseModel):
