@@ -44,6 +44,9 @@ const App: React.FC = () => {
     const [novels, setNovels] = useState<NovelInfo[]>([]);
     const [isUploading, setIsUploading] = useState(false);
     const [currentCollection, setCurrentCollection] = useState<string>('');
+    const [showUploadModal, setShowUploadModal] = useState(false);
+    const [uploadTitle, setUploadTitle] = useState('');
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     const graphContainer = useRef<HTMLDivElement>(null);
@@ -129,19 +132,43 @@ const App: React.FC = () => {
             return;
         }
 
+        // 打开模态框让用户输入标题
+        setSelectedFile(file);
+        setUploadTitle(file.name.replace('.txt', ''));
+        setShowUploadModal(true);
+    };
+
+    const handleConfirmUpload = async () => {
+        if (!selectedFile) return;
+
+        if (!uploadTitle.trim()) {
+            alert('请输入小说标题');
+            return;
+        }
+
         setIsUploading(true);
+        setShowUploadModal(false);
         try {
-            const response = await uploadNovel(file);
+            const response = await uploadNovel(selectedFile, uploadTitle.trim());
             // 开始轮询状态
             pollStatus(response.collection_name);
             // 刷新小说列表
             await loadNovelsList();
+            // 重置状态
+            setSelectedFile(null);
+            setUploadTitle('');
         } catch (error) {
             alert('上传失败');
             console.error(error);
         } finally {
             setIsUploading(false);
         }
+    };
+
+    const handleCancelUpload = () => {
+        setShowUploadModal(false);
+        setSelectedFile(null);
+        setUploadTitle('');
     };
 
     const pollStatus = (collectionName: string) => {
@@ -437,6 +464,53 @@ const App: React.FC = () => {
                             ))}
                         </div>
                     </div>
+
+                    {/* 上传标题模态框 */}
+                    {showUploadModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+                            <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in duration-200">
+                                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                                    <BookOpen className="w-5 h-5 text-sky-400" />
+                                    上传小说
+                                </h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="block text-sm text-slate-400 mb-2">小说标题</label>
+                                        <input
+                                            type="text"
+                                            value={uploadTitle}
+                                            onChange={(e) => setUploadTitle(e.target.value)}
+                                            placeholder="请输入小说标题"
+                                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-sky-500 transition-all"
+                                            autoFocus
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter') {
+                                                    handleConfirmUpload();
+                                                }
+                                            }}
+                                        />
+                                    </div>
+                                    <div className="text-xs text-slate-500">
+                                        已选择文件: {selectedFile?.name}
+                                    </div>
+                                    <div className="flex gap-3 pt-2">
+                                        <button
+                                            onClick={handleCancelUpload}
+                                            className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all"
+                                        >
+                                            取消
+                                        </button>
+                                        <button
+                                            onClick={handleConfirmUpload}
+                                            className="flex-1 px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm transition-all"
+                                        >
+                                            开始上传
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <h2 className="text-sky-400 font-semibold mb-4 flex items-center gap-2">
