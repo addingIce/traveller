@@ -226,7 +226,7 @@ A: 使用 `bash scripts/manage.sh restart` 命令。
 
 ## 许可证
 
-MIT License
+Apache License 2.0
 
 ## 联系方式
 
