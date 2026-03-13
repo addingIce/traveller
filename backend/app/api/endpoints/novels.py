@@ -169,15 +169,17 @@ async def monitor_entity_extraction(
     if not neo4j_driver:
         return
     
-    max_check_count = 30  # 最多检查 30 次（约 5 分钟）
+    max_check_count = 60  # 最多检查 60 次（约 10 分钟）
     check_interval = 10    # 每 10 秒检查一次
+    min_monitor_time = 180 # 最少监控 3 分钟后才检查稳定性
     stable_count = 0       # 稳定计数器
-    stable_threshold = 3   # 连续 3 次稳定才算完成
+    stable_threshold = 7   # 连续 7 次稳定才算完成
     last_entity_count = 0
     
     try:
         for i in range(max_check_count):
             await asyncio.sleep(check_interval)
+            time_elapsed = (i + 1) * check_interval  # 已监控时间
             
             try:
                 async with neo4j_driver.session() as session:
@@ -216,35 +218,41 @@ async def monitor_entity_extraction(
                     except Exception as e:
                         print(f"[ERROR] Failed to update Novel node status: {e}")
                 
-                # 检查是否稳定
-                if entity_count == last_entity_count:
-                    stable_count += 1
-                    print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
-                    
-                    if stable_count >= stable_threshold:
-                        # 实体数量稳定，更新状态为 ready
-                        status_store[collection_name]["status"] = "ready"
+                # 只在最少监控时间后才检查稳定性
+                if time_elapsed >= min_monitor_time:
+                    # 检查是否稳定
+                    if entity_count == last_entity_count:
+                        stable_count += 1
+                        print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
                         
-                        # 更新 Neo4j Novel 节点状态
-                        try:
-                            async with neo4j_driver.session() as session:
-                                update_query = """
-                                MATCH (n:Novel {collection_name: $collection_name})
-                                SET n.status = 'ready'
-                                RETURN n
-                                """
-                                await session.run(update_query, collection_name=collection_name)
-                                print(f"[INFO] {collection_name}: Entity extraction completed ({entity_count} entities)")
-                        except Exception as e:
-                            print(f"[ERROR] Failed to update Novel node status: {e}")
-                        
-                        # 完成监控
-                        return
+                        if stable_count >= stable_threshold:
+                            # 实体数量稳定，更新状态为 ready
+                            status_store[collection_name]["status"] = "ready"
+                            
+                            # 更新 Neo4j Novel 节点状态
+                            try:
+                                async with neo4j_driver.session() as session:
+                                    update_query = """
+                                    MATCH (n:Novel {collection_name: $collection_name})
+                                    SET n.status = 'ready'
+                                    RETURN n
+                                    """
+                                    await session.run(update_query, collection_name=collection_name)
+                                    print(f"[INFO] {collection_name}: Entity extraction completed ({entity_count} entities)")
+                            except Exception as e:
+                                print(f"[ERROR] Failed to update Novel node status: {e}")
+                            
+                            # 完成监控
+                            return
+                    else:
+                        # 实体数量还在变化，重置稳定计数器
+                        stable_count = 0
+                        last_entity_count = entity_count
+                        print(f"[DEBUG] {collection_name}: Extracting ({entity_count} entities)")
                 else:
-                    # 实体数量还在变化，重置稳定计数器
-                    stable_count = 0
+                    # 未达到最小监控时间，只更新计数器
                     last_entity_count = entity_count
-                    print(f"[DEBUG] {collection_name}: Extracting ({entity_count} entities)")
+                    print(f"[DEBUG] {collection_name}: Monitoring ({entity_count} entities, {time_elapsed}s elapsed)")
         
         # 超时但仍有实体，也标记为 ready
         if last_entity_count > 0:
@@ -752,25 +760,41 @@ async def check_zep_messages(collection_name: str) -> int:
 
 
 async def observe_entity_growth(collection_name: str, neo4j_driver) -> tuple[int, bool]:
-    """观察实体增长情况，等待30秒
+    """观察实体增长情况，等待判断是否稳定
     
     Returns:
         (entity_count, is_stable): 实体数量和是否稳定
     """
-    check_count = 3  # 检查3次
+    check_count = 7  # 检查7次
     check_interval = 10  # 每次间隔10秒
+    min_monitor_time = 180 # 最少监控 3 分钟后才判断稳定性
     counts = []
+    stable_count = 0
+    last_count = 0
     
     for i in range(check_count):
         entity_count = await get_entity_count(collection_name, neo4j_driver)
         counts.append(entity_count)
-        print(f"[DEBUG] {collection_name}: Observation {i+1}/{check_count} - {entity_count} entities")
+        time_elapsed = (i + 1) * check_interval
+        
+        print(f"[DEBUG] {collection_name}: Observation {i+1}/{check_count} - {entity_count} entities ({time_elapsed}s elapsed)")
+        
+        # 只在最少监控时间后才判断稳定性
+        if time_elapsed >= min_monitor_time:
+            if entity_count == last_count:
+                stable_count += 1
+            else:
+                stable_count = 0
+                last_count = entity_count
+        else:
+            # 未达到最小监控时间，只更新计数器
+            last_count = entity_count
         
         if i < check_count - 1:  # 最后一次不等待
             await asyncio.sleep(check_interval)
     
-    # 判断是否稳定（连续3次数量相同）
-    is_stable = all(count == counts[0] for count in counts)
+    # 判断是否稳定（在最少监控时间后连续7次数量相同）
+    is_stable = stable_count >= check_count
     final_count = counts[-1]
     
     print(f"[DEBUG] {collection_name}: Final count={final_count}, stable={is_stable}")
