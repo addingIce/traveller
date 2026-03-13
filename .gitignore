@@ -20,6 +20,8 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+backend.log
+frontend.log
 
 # Zep/Docker
 data/db

@@ -54,6 +54,12 @@ async def lifespan(app: FastAPI):
         app.state.neo4j_driver = AsyncGraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
         await app.state.neo4j_driver.verify_connectivity()
         print("Neo4j 服务连接成功！")
+        
+        # 恢复小说状态
+        print("开始恢复小说状态...")
+        from app.api.endpoints.novels import recover_novel_status
+        await recover_novel_status(app.state.neo4j_driver, app.state.processing_tasks)
+        print("小说状态恢复完成！")
 
     except Exception as e:
         print(f"后端基础设施连接失败警告: {str(e)}")

@@ -645,6 +645,7 @@ const scrollToSection = (sectionId: string) => {
                                                     novel.status === 'completed' ? 'text-sky-400' :
                                                     novel.status === 'extracting' ? 'text-purple-400' :
                                                     novel.status === 'processing' ? 'text-amber-400' :
+                                                    novel.status === 'checking' ? 'text-blue-400' :
                                                     novel.status === 'queued' ? 'text-slate-400' :
                                                     'text-red-400'
                                                 }>
@@ -652,6 +653,7 @@ const scrollToSection = (sectionId: string) => {
                                                      novel.status === 'completed' ? '📝 分块完成' :
                                                      novel.status === 'extracting' ? '🔄 实体提取中' :
                                                      novel.status === 'processing' ? '⏳ 处理中' :
+                                                     novel.status === 'checking' ? '🔍 状态检查中' :
                                                      novel.status === 'queued' ? '⏸️ 排队中' :
                                                      '✗ 失败'}
                                                 </span>

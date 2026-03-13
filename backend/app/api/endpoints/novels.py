@@ -710,3 +710,187 @@ async def delete_novel(collection_name: str, request: Request):
             success=False,
             message=f"删除失败: {str(e)}"
         )
+
+
+async def get_entity_count(collection_name: str, neo4j_driver) -> int:
+    """获取指定小说的实体数量"""
+    try:
+        async with neo4j_driver.session() as session:
+            count_query = """
+            MATCH (e:Entity {group_id: $group_id})
+            RETURN COUNT(DISTINCT e) as count
+            """
+            result = await session.run(count_query, group_id=collection_name)
+            record = await result.single()
+            return record["count"] if record else 0
+    except Exception as e:
+        print(f"[ERROR] Failed to check entity count: {e}")
+        return 0
+
+
+async def check_zep_messages(collection_name: str) -> int:
+    """检查Zep会话中的消息数量"""
+    try:
+        import httpx
+        zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
+        async with httpx.AsyncClient(timeout=30.0) as http_client:
+            response = await http_client.get(
+                f"{zep_api_url}/sessions/{collection_name}/messages",
+                params={"limit": 1}
+            )
+            if response.status_code == 200:
+                data = response.json()
+                return len(data.get("messages", []))
+            elif response.status_code == 404:
+                return 0
+            else:
+                print(f"[WARNING] Failed to check Zep messages: {response.status_code}")
+                return 0
+    except Exception as e:
+        print(f"[ERROR] Failed to check Zep messages: {e}")
+        return 0
+
+
+async def observe_entity_growth(collection_name: str, neo4j_driver) -> tuple[int, bool]:
+    """观察实体增长情况，等待30秒
+    
+    Returns:
+        (entity_count, is_stable): 实体数量和是否稳定
+    """
+    check_count = 3  # 检查3次
+    check_interval = 10  # 每次间隔10秒
+    counts = []
+    
+    for i in range(check_count):
+        entity_count = await get_entity_count(collection_name, neo4j_driver)
+        counts.append(entity_count)
+        print(f"[DEBUG] {collection_name}: Observation {i+1}/{check_count} - {entity_count} entities")
+        
+        if i < check_count - 1:  # 最后一次不等待
+            await asyncio.sleep(check_interval)
+    
+    # 判断是否稳定（连续3次数量相同）
+    is_stable = all(count == counts[0] for count in counts)
+    final_count = counts[-1]
+    
+    print(f"[DEBUG] {collection_name}: Final count={final_count}, stable={is_stable}")
+    return final_count, is_stable
+
+
+async def recover_novel_status(neo4j_driver, status_store: dict):
+    """后端启动时恢复所有小说状态"""
+    try:
+        print("[INFO] 开始检查小说状态...")
+        
+        # 查询所有需要恢复的小说（processing/completed/extracting状态）
+        async with neo4j_driver.session() as session:
+            query = """
+            MATCH (n:Novel)
+            WHERE n.status IN ['processing', 'completed', 'extracting']
+            RETURN n.collection_name as collection_name, n.title as title, n.status as status
+            ORDER BY n.created_at DESC
+            """
+            result = await session.run(query)
+            novels = [record async for record in result]
+        
+        if not novels:
+            print("[INFO] 没有需要恢复的小说")
+            return
+        
+        print(f"[INFO] 找到 {len(novels)} 个需要检查的小说")
+        
+        for novel in novels:
+            collection_name = novel["collection_name"]
+            title = novel["title"]
+            current_status = novel["status"]
+            
+            print(f"[INFO] 检查: {title} (状态: {current_status})")
+            
+            # 检查Zep数据和实体数量
+            zep_count = await check_zep_messages(collection_name)
+            entity_count = await get_entity_count(collection_name, neo4j_driver)
+            
+            print(f"[DEBUG] Zep消息数: {zep_count}, 实体数: {entity_count}")
+            
+            if current_status == 'processing':
+                # 处理中状态
+                if zep_count > 0:
+                    # Zep有数据，分块已完成
+                    print(f"[INFO] {title}: 分块已完成，更新为completed并启动监控")
+                    async with neo4j_driver.session() as update_session:
+                        await update_session.run("""
+                            MATCH (n:Novel {collection_name: $collection_name})
+                            SET n.status = 'completed'
+                        """, collection_name=collection_name)
+                    
+                    # 启动实体提取监控
+                    asyncio.create_task(monitor_entity_extraction(
+                        collection_name,
+                        neo4j_driver,
+                        status_store
+                    ))
+                else:
+                    # Zep无数据，分块失败
+                    print(f"[WARNING] {title}: Zep无数据，标记为failed")
+                    async with neo4j_driver.session() as update_session:
+                        await update_session.run("""
+                            MATCH (n:Novel {collection_name: $collection_name})
+                            SET n.status = 'failed'
+                        """, collection_name=collection_name)
+                    
+            elif current_status in ['completed', 'extracting']:
+                # 分块完成或提取中状态
+                if entity_count == 0:
+                    # 没有实体
+                    if zep_count == 0:
+                        # Zep也没数据，标记为failed
+                        print(f"[WARNING] {title}: 无数据，标记为failed")
+                        async with neo4j_driver.session() as update_session:
+                            await update_session.run("""
+                                MATCH (n:Novel {collection_name: $collection_name})
+                                SET n.status = 'failed'
+                            """, collection_name=collection_name)
+                    else:
+                        # Zep有数据但无实体，提取失败
+                        print(f"[WARNING] {title}: Zep有数据但无实体，标记为failed")
+                        async with neo4j_driver.session() as update_session:
+                            await update_session.run("""
+                                MATCH (n:Novel {collection_name: $collection_name})
+                                SET n.status = 'failed'
+                            """, collection_name=collection_name)
+                else:
+                    # 有实体，等待30秒观察
+                    print(f"[INFO] {title}: 有实体，观察增长情况...")
+                    final_count, is_stable = await observe_entity_growth(
+                        collection_name,
+                        neo4j_driver
+                    )
+                    
+                    if is_stable and final_count > 0:
+                        # 实体稳定，标记为ready
+                        print(f"[INFO] {title}: 实体提取完成 ({final_count}个实体)")
+                        async with neo4j_driver.session() as update_session:
+                            await update_session.run("""
+                                MATCH (n:Novel {collection_name: $collection_name})
+                                SET n.status = 'ready'
+                            """, collection_name=collection_name)
+                    else:
+                        # 实体还在增长，重新启动监控
+                        print(f"[INFO] {title}: 实体还在增长，重启监控任务")
+                        async with neo4j_driver.session() as update_session:
+                            await update_session.run("""
+                                MATCH (n:Novel {collection_name: $collection_name})
+                                SET n.status = 'extracting'
+                            """, collection_name=collection_name)
+                        
+                        # 启动实体提取监控
+                        asyncio.create_task(monitor_entity_extraction(
+                            collection_name,
+                            neo4j_driver,
+                            status_store
+                        ))
+        
+        print("[INFO] 小说状态检查完成")
+        
+    except Exception as e:
+        print(f"[ERROR] 状态恢复失败: {e}")
