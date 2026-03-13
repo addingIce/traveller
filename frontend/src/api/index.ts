@@ -121,6 +121,10 @@ export interface APIConfig {
     llm_api_key: string;
     llm_base_url: string;
     llm_model: string;
+    model_director: string;  // 导演模型（剧情推演）
+    model_parser: string;  // 解析模型（意图分析）
+    model_zep_extractor: string;  // Zep 提取模型（知识图谱）
+    model_graphiti: string;  // Graphiti 模型（实体提取）
     embedding_api_key: string;
     embedding_base_url: string;
     embedding_model: string;

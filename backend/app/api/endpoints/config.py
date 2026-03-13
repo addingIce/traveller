@@ -35,6 +35,10 @@ class APIConfig(BaseModel):
     llm_api_key: str = ""
     llm_base_url: str = "https://api.openai.com/v1"
     llm_model: str = "gpt-4o"
+    model_director: str = "gpt-4o"  # 导演模型（剧情推演）
+    model_parser: str = "gpt-4o-mini"  # 解析模型（意图分析）
+    model_zep_extractor: str = "gpt-4o-mini"  # Zep 提取模型（知识图谱）
+    model_graphiti: str = "gpt-4o"  # Graphiti 模型（实体提取）
     embedding_api_key: str = ""
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v4"
@@ -122,9 +126,10 @@ def update_env_file(config: SystemConfig):
             # LLM 配置
             "OPENAI_API_KEY": config.api.llm_api_key,
             "OPENAI_BASE_URL": config.api.llm_base_url,
-            "MODEL_DIRECTOR": config.api.llm_model,
-            "MODEL_PARSER": config.api.llm_model,  # 使用相同的模型
-            "MODEL_NAME": config.api.llm_model,  # Graphiti 模型
+            "MODEL_DIRECTOR": config.api.model_director,
+            "MODEL_PARSER": config.api.model_parser,
+            "MODEL_ZEP_EXTRACTOR": config.api.model_zep_extractor,
+            "MODEL_NAME": config.api.model_graphiti,  # Graphiti 模型
             # Embedding 配置
             "EMBEDDING_OPENAI_API_KEY": config.api.embedding_api_key,
             "EMBEDDING_OPENAI_BASE_URL": config.api.embedding_base_url,
@@ -132,7 +137,7 @@ def update_env_file(config: SystemConfig):
             # Zep NLP 配置
             "ZEP_NLP_OPENAI_API_KEY": config.api.llm_api_key,  # 使用相同的 API Key
             "ZEP_NLP_OPENAI_BASE_URL": config.api.llm_base_url,  # 使用相同的 Base URL
-            "ZEP_NLP_OPENAI_MODEL": config.api.llm_model,  # 使用相同的模型
+            "ZEP_NLP_OPENAI_MODEL": config.api.model_zep_extractor,  # 使用 Zep 提取模型
             # 性能配置
             "GRAPHITI_LLM_MAX_CONCURRENCY": str(config.performance.graphiti_llm_max_concurrency),
             "GRAPHITI_LLM_MIN_INTERVAL": str(config.performance.graphiti_llm_min_interval),

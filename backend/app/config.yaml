@@ -5,6 +5,10 @@ api:
   llm_api_key: sk-c264868eb9bee420aa14c3c376c32121
   llm_base_url: https://apis.iflow.cn/v1
   llm_model: deepseek-v3
+  model_director: deepseek-v3
+  model_graphiti: deepseek-v3
+  model_parser: deepseek-v3
+  model_zep_extractor: deepseek-v3
 business:
   chunk_max_length: 500
   chunk_min_length: 100
