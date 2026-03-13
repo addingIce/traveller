@@ -63,6 +63,20 @@ const App: React.FC = () => {
         loadNovelsList();
     }, []);
 
+    // Poll novels list status when there are novels in processing/completed/extracting state
+    useEffect(() => {
+        const interval = setInterval(async () => {
+            const hasInProgressNovels = novels.some(
+                n => n.status === 'processing' || n.status === 'completed' || n.status === 'extracting'
+            );
+            if (hasInProgressNovels) {
+                await loadNovelsList();
+            }
+        }, 5000); // 每 5 秒检查一次
+
+        return () => clearInterval(interval);
+    }, [novels]);
+
     // Auto-select first completed novel when novels are loaded
     useEffect(() => {
         if (!currentCollection && novels.length > 0) {
@@ -450,12 +464,18 @@ const loadGraph = async () => {
                                             <div className="font-medium truncate">{novel.title}</div>
                                             <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
                                                 <span className={
-                                                    novel.status === 'completed' ? 'text-emerald-400' :
+                                                    novel.status === 'ready' ? 'text-emerald-400' :
+                                                    novel.status === 'completed' ? 'text-sky-400' :
+                                                    novel.status === 'extracting' ? 'text-purple-400' :
                                                     novel.status === 'processing' ? 'text-amber-400' :
+                                                    novel.status === 'queued' ? 'text-slate-400' :
                                                     'text-red-400'
                                                 }>
-                                                    {novel.status === 'completed' ? '✓ 已完成' :
+                                                    {novel.status === 'ready' ? '✓ 就绪' :
+                                                     novel.status === 'completed' ? '📝 分块完成' :
+                                                     novel.status === 'extracting' ? '🔄 实体提取中' :
                                                      novel.status === 'processing' ? '⏳ 处理中' :
+                                                     novel.status === 'queued' ? '⏸️ 排队中' :
                                                      '✗ 失败'}
                                                 </span>
                                                 <span>• {novel.chunks_count} 个片段</span>
@@ -656,21 +676,44 @@ const loadGraph = async () => {
                                 <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
                                     {(() => {
                                         const currentNovel = novels.find(n => n.collection_name === currentCollection);
-                                        const isProcessing = currentNovel?.status === 'processing';
-                                        return (
-                                            <>
-                                                {isProcessing ? (
+                                        const status = currentNovel?.status;
+                                        
+                                        if (status === 'processing') {
+                                            return (
+                                                <>
                                                     <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-amber-400" />
-                                                ) : (
+                                                    <p className="text-sm">正在处理小说内容，请稍候...</p>
+                                                </>
+                                            );
+                                        } else if (status === 'completed') {
+                                            return (
+                                                <>
                                                     <Network className="w-12 h-12 mb-4 opacity-20" />
-                                                )}
-                                                <p className="text-sm">
-                                                    {isProcessing 
-                                                        ? '知识图谱正在生成中，请稍候...' 
-                                                        : '知识图谱暂无数据，可能小说内容较短或未检测到实体。'}
-                                                </p>
-                                            </>
-                                        );
+                                                    <p className="text-sm">分块处理完成，等待实体提取开始...</p>
+                                                </>
+                                            );
+                                        } else if (status === 'extracting') {
+                                            return (
+                                                <>
+                                                    <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-purple-400" />
+                                                    <p className="text-sm">正在提取实体和关系，请稍候...</p>
+                                                </>
+                                            );
+                                        } else if (status === 'ready') {
+                                            return (
+                                                <>
+                                                    <Network className="w-12 h-12 mb-4 opacity-20" />
+                                                    <p className="text-sm">知识图谱暂无数据，可能小说内容较短或未检测到实体。</p>
+                                                </>
+                                            );
+                                        } else {
+                                            return (
+                                                <>
+                                                    <Network className="w-12 h-12 mb-4 opacity-20" />
+                                                    <p className="text-sm">知识图谱暂无数据，可能小说内容较短或未检测到实体。</p>
+                                                </>
+                                            );
+                                        }
                                     })()}
                                 </div>
                             )}

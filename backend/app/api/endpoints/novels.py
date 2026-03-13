@@ -155,6 +155,117 @@ def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 5
     return chunks
 
 
+async def monitor_entity_extraction(
+    collection_name: str,
+    neo4j_driver,
+    status_store: dict
+) -> None:
+    """
+    监控实体提取进度
+    当检测到实体数量 > 0 时，更新状态为 'extracting'
+    当实体数量稳定时，更新状态为 'ready'
+    """
+    if not neo4j_driver:
+        return
+    
+    max_check_count = 30  # 最多检查 30 次（约 5 分钟）
+    check_interval = 10    # 每 10 秒检查一次
+    stable_count = 0       # 稳定计数器
+    stable_threshold = 3   # 连续 3 次稳定才算完成
+    last_entity_count = 0
+    
+    try:
+        for i in range(max_check_count):
+            await asyncio.sleep(check_interval)
+            
+            try:
+                async with neo4j_driver.session() as session:
+                    # 查询实体数量
+                    count_query = """
+                    MATCH (e:Entity {group_id: $group_id})
+                    RETURN COUNT(DISTINCT e) as count
+                    """
+                    result = await session.run(count_query, group_id=collection_name)
+                    record = await result.single()
+                    entity_count = record["count"] if record else 0
+            except Exception as e:
+                print(f"[ERROR] Failed to check entity count: {e}")
+                continue
+            
+            # 状态判断逻辑
+            if entity_count == 0:
+                # 还没有实体，继续等待
+                print(f"[DEBUG] {collection_name}: Waiting for entities (0/{i+1})")
+                continue
+            elif entity_count > 0:
+                # 有实体了，更新状态为 extracting
+                if status_store.get(collection_name, {}).get("status") == "completed":
+                    status_store[collection_name]["status"] = "extracting"
+                    
+                    # 更新 Neo4j Novel 节点状态
+                    try:
+                        async with neo4j_driver.session() as session:
+                            update_query = """
+                            MATCH (n:Novel {collection_name: $collection_name})
+                            SET n.status = 'extracting'
+                            RETURN n
+                            """
+                            await session.run(update_query, collection_name=collection_name)
+                            print(f"[INFO] {collection_name}: Entity extraction started ({entity_count} entities)")
+                    except Exception as e:
+                        print(f"[ERROR] Failed to update Novel node status: {e}")
+                
+                # 检查是否稳定
+                if entity_count == last_entity_count:
+                    stable_count += 1
+                    print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
+                    
+                    if stable_count >= stable_threshold:
+                        # 实体数量稳定，更新状态为 ready
+                        status_store[collection_name]["status"] = "ready"
+                        
+                        # 更新 Neo4j Novel 节点状态
+                        try:
+                            async with neo4j_driver.session() as session:
+                                update_query = """
+                                MATCH (n:Novel {collection_name: $collection_name})
+                                SET n.status = 'ready'
+                                RETURN n
+                                """
+                                await session.run(update_query, collection_name=collection_name)
+                                print(f"[INFO] {collection_name}: Entity extraction completed ({entity_count} entities)")
+                        except Exception as e:
+                            print(f"[ERROR] Failed to update Novel node status: {e}")
+                        
+                        # 完成监控
+                        return
+                else:
+                    # 实体数量还在变化，重置稳定计数器
+                    stable_count = 0
+                    last_entity_count = entity_count
+                    print(f"[DEBUG] {collection_name}: Extracting ({entity_count} entities)")
+        
+        # 超时但仍有实体，也标记为 ready
+        if last_entity_count > 0:
+            status_store[collection_name]["status"] = "ready"
+            try:
+                async with neo4j_driver.session() as session:
+                    update_query = """
+                    MATCH (n:Novel {collection_name: $collection_name})
+                    SET n.status = 'ready'
+                    RETURN n
+                    """
+                    await session.run(update_query, collection_name=collection_name)
+                    print(f"[INFO] {collection_name}: Entity extraction completed (timeout, {last_entity_count} entities)")
+            except Exception as e:
+                print(f"[ERROR] Failed to update Novel node status: {e}")
+        else:
+            print(f"[WARNING] {collection_name}: No entities extracted after monitoring")
+    
+    except Exception as e:
+        print(f"[ERROR] Entity extraction monitoring failed: {e}")
+
+
 async def process_novel_task(
     collection_name: str,
     content: str,
@@ -250,7 +361,7 @@ async def process_novel_task(
             # 给 Zep 缓冲时间
             await asyncio.sleep(1)
         
-        # 更新状态：完成
+        # 更新状态：分块处理完成
         status_store[collection_name]["status"] = "completed"
         status_store[collection_name]["progress"] = 100.0
         
@@ -267,6 +378,9 @@ async def process_novel_task(
                     print(f"[INFO] Updated Novel node status to 'completed': {collection_name}")
             except Exception as e:
                 print(f"[ERROR] Failed to update Novel node status: {e}")
+        
+        # 启动实体提取状态监控任务
+        asyncio.create_task(monitor_entity_extraction(collection_name, neo4j_driver, status_store))
         
         # 注意：Graphiti 会由 Zep 自动触发，无需手动调用
         # Zep 配置了 graphiti.service_url，会自动提取实体和关系
