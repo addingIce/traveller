@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
 import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
-import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RestartCircle } from 'lucide-react';
+import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
 
@@ -958,7 +958,7 @@ const loadGraph = async () => {
                                         </>
                                     ) : (
                                         <>
-                                            <RestartCircle className="w-4 h-4" />
+                                            <RefreshCw className="w-4 h-4" />
                                             重启服务
                                         </>
                                     )}

@@ -1,0 +1,3 @@
+INFO:     Will watch for changes in these directories: ['/Users/a1-6/Projects/novel/backend']
+ERROR:    [Errno 48] Address already in use
+[INFO] System config loaded successfully
