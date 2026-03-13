@@ -546,7 +546,7 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const handleSendChat = async () => {
-        if (!chatInput.trim() || isChatting) return;
+        if (!chatInput.trim() || isChatting || !currentCollection) return;
 
         const userMessage = chatInput.trim();
         setHistory(prev => [...prev, { type: 'user', content: userMessage }]);
@@ -554,7 +554,7 @@ const scrollToSection = (sectionId: string) => {
         setIsChatting(true);
 
         try {
-            const aiResponse = await chatInteract(sessionId, 'test_novel', userMessage);
+            const aiResponse = await chatInteract(sessionId, currentCollection, userMessage);
             setHistory(prev => [...prev, { type: 'ai', ...aiResponse }]);
 
             // If the action caused a long-term change, refresh our graph quietly

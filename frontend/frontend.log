@@ -2,9 +2,137 @@
 > traveller-engine-frontend@0.1.0 dev
 > vite
 
-Port 3000 is in use, trying another one...
 
-  VITE v4.5.14  ready in 121 ms
+  VITE v4.5.14  ready in 437 ms
 
-  ➜  Local:   http://localhost:3001/
+  ➜  Local:   http://localhost:3000/
   ➜  Network: use --host to expose
+(node:21825) [DEP0060] DeprecationWarning: The `util._extend` API is deprecated. Please use Object.assign() instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+7:58:02 PM [vite] hmr update /src/App.tsx, /src/index.css
+8:01:55 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:00 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:03 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:16 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+8:02:17 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:03:57 PM [vite] hmr update /src/App.tsx, /src/index.css
+9:09:08 PM [vite] page reload dist/index.html
+9:10:22 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:10:35 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:10:43 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:10:51 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:10:58 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:03 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:03 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:11 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:11 PM [vite] http proxy error at /api/v1/config:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:18 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
+9:11:23 PM [vite] http proxy error at /api/v1/novels:
+AggregateError [ECONNREFUSED]: 
+    at internalConnectMultiple (node:net:1134:18)
+    at afterConnectMultiple (node:net:1715:7)
