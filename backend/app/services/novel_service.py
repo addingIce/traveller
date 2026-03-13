@@ -58,6 +58,17 @@ async def monitor_entity_extraction(
     if not neo4j_driver:
         return
     
+    # 恢复场景下 status_store 可能不存在该小说，先兜底避免 KeyError
+    status_store.setdefault(collection_name, {
+        "status": "completed",
+        "progress": 100.0,
+        "chunks_processed": 0,
+        "total_chunks": 0,
+        "error_message": None,
+        "created_at": datetime.utcnow().isoformat(),
+        "title": collection_name,
+    })
+    
     max_check_count = 60
     check_interval = 10
     min_monitor_time = 180
@@ -291,10 +302,11 @@ async def check_zep_messages(collection_name: str) -> int:
 async def observe_entity_growth(collection_name: str, neo4j_driver) -> tuple[int, bool]:
     check_count = 7
     check_interval = 10
-    min_monitor_time = 180
+    min_monitor_time = 30
+    stable_threshold = 3
     counts = []
     stable_count = 0
-    last_count = 0
+    last_count = None
     
     for i in range(check_count):
         entity_count = await get_entity_count(collection_name, neo4j_driver)
@@ -303,20 +315,24 @@ async def observe_entity_growth(collection_name: str, neo4j_driver) -> tuple[int
         
         print(f"[DEBUG] {collection_name}: Observation {i+1}/{check_count} - {entity_count} entities ({time_elapsed}s elapsed)")
         
-        if time_elapsed >= min_monitor_time:
-            if entity_count == last_count:
-                stable_count += 1
-            else:
-                stable_count = 0
-                last_count = entity_count
-        else:
+        if time_elapsed < min_monitor_time:
             last_count = entity_count
+        else:
+            if last_count is None or entity_count != last_count:
+                stable_count = 1
+                last_count = entity_count
+            else:
+                stable_count += 1
+            
+            if entity_count > 0 and stable_count >= stable_threshold:
+                print(f"[DEBUG] {collection_name}: Final count={entity_count}, stable=True")
+                return entity_count, True
         
         if i < check_count - 1:
             await asyncio.sleep(check_interval)
     
-    is_stable = stable_count >= check_count
-    final_count = counts[-1]
+    final_count = counts[-1] if counts else 0
+    is_stable = final_count > 0 and stable_count >= stable_threshold
     
     print(f"[DEBUG] {collection_name}: Final count={final_count}, stable={is_stable}")
     return final_count, is_stable

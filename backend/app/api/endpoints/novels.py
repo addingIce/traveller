@@ -317,7 +317,7 @@ async def delete_novel(collection_name: str, request: Request):
                     # 使用 DETACH DELETE 删除关系但不删除目标节点
                     edge_query = """
                     MATCH (n:Entity {group_id: $group_id})-[r]-(m)
-                    DETACH DELETE r
+                    DELETE r
                     RETURN count(r) as deleted
                     """
                     edge_result = await driver_session.run(edge_query, group_id=collection_name)
@@ -433,7 +433,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
             query = """
             MATCH (n:Novel)
             WHERE n.status IN ['processing', 'completed', 'extracting']
-            RETURN n.collection_name as collection_name, n.title as title, n.status as status
+            RETURN n.collection_name as collection_name, n.title as title, n.status as status, n.created_at as created_at
             ORDER BY n.created_at DESC
             """
             result = await session.run(query)
@@ -449,6 +449,18 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
             collection_name = novel["collection_name"]
             title = novel["title"]
             current_status = novel["status"]
+            created_at = novel["created_at"] or datetime.utcnow().isoformat()
+            
+            # 恢复路径先补齐内存状态，避免监控协程直接写入时报 KeyError
+            status_store.setdefault(collection_name, {
+                "status": current_status,
+                "progress": 100.0 if current_status in ["completed", "extracting", "ready"] else 0.0,
+                "chunks_processed": 0,
+                "total_chunks": 0,
+                "error_message": None,
+                "created_at": created_at,
+                "title": title or collection_name
+            })
             
             print(f"[INFO] 检查: {title} (状态: {current_status})")
             
@@ -468,6 +480,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                             MATCH (n:Novel {collection_name: $collection_name})
                             SET n.status = 'completed'
                         """, collection_name=collection_name)
+                    status_store[collection_name]["status"] = "completed"
                     
                     # 启动实体提取监控
                     asyncio.create_task(monitor_entity_extraction(
@@ -483,6 +496,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                             MATCH (n:Novel {collection_name: $collection_name})
                             SET n.status = 'failed'
                         """, collection_name=collection_name)
+                    status_store[collection_name]["status"] = "failed"
                     
             elif current_status in ['completed', 'extracting']:
                 # 分块完成或提取中状态
@@ -496,6 +510,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                                 MATCH (n:Novel {collection_name: $collection_name})
                                 SET n.status = 'failed'
                             """, collection_name=collection_name)
+                        status_store[collection_name]["status"] = "failed"
                     else:
                         # Zep有数据但无实体，提取失败
                         print(f"[WARNING] {title}: Zep有数据但无实体，标记为failed")
@@ -504,6 +519,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                                 MATCH (n:Novel {collection_name: $collection_name})
                                 SET n.status = 'failed'
                             """, collection_name=collection_name)
+                        status_store[collection_name]["status"] = "failed"
                 else:
                     # 有实体，等待30秒观察
                     print(f"[INFO] {title}: 有实体，观察增长情况...")
@@ -520,6 +536,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                                 MATCH (n:Novel {collection_name: $collection_name})
                                 SET n.status = 'ready'
                             """, collection_name=collection_name)
+                        status_store[collection_name]["status"] = "ready"
                     else:
                         # 实体还在增长，重新启动监控
                         print(f"[INFO] {title}: 实体还在增长，重启监控任务")
@@ -528,6 +545,7 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                                 MATCH (n:Novel {collection_name: $collection_name})
                                 SET n.status = 'extracting'
                             """, collection_name=collection_name)
+                        status_store[collection_name]["status"] = "extracting"
                         
                         # 启动实体提取监控
                         asyncio.create_task(monitor_entity_extraction(
