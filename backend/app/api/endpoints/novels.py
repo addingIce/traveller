@@ -399,7 +399,7 @@ async def get_novels_list(request: Request):
                 old_novels_query = """
                 MATCH (e:Entity)
                 WHERE e.group_id STARTS WITH 'novel_' 
-                  AND NOT EXISTS((:Novel {collection_name: e.group_id}))
+                  AND NOT EXISTS { (:Novel {collection_name: e.group_id}) }
                 RETURN DISTINCT e.group_id as group_id, COUNT(e) as entity_count
                 ORDER BY group_id
                 """
