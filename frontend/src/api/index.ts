@@ -60,6 +60,7 @@ export interface NovelInfo {
 
 export interface UploadResponse {
     collection_name: string;
+    title: string;
     status: string;
     message: string;
     estimated_time?: number;

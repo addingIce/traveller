@@ -327,10 +327,27 @@ const scrollToSection = (sectionId: string) => {
         setShowUploadModal(false);
         try {
             const response = await uploadNovel(selectedFile, uploadTitle.trim());
+            
+            // 立即将新小说添加到列表中，避免用户等待
+            const newNovel: NovelInfo = {
+                collection_name: response.collection_name,
+                title: response.title,
+                status: 'processing', // 显示为处理中
+                created_at: new Date().toISOString(),
+                chunks_count: 0
+            };
+            setNovels(prevNovels => [newNovel, ...prevNovels]);
+            
+            // 如果当前没有选中的小说，自动选中新上传的小说
+            if (!currentCollection) {
+                setCurrentCollection(response.collection_name);
+            }
+            
             // 开始轮询状态
             pollStatus(response.collection_name);
-            // 刷新小说列表
-            await loadNovelsList();
+            // 同时也刷新小说列表（确保数据一致性）
+            loadNovelsList();
+            
             // 重置状态
             setSelectedFile(null);
             setUploadTitle('');

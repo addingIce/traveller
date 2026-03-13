@@ -34,6 +34,7 @@ class NovelInfo(BaseModel):
 class UploadResponse(BaseModel):
     """上传响应"""
     collection_name: str
+    title: str
     status: str
     message: str
     estimated_time: Optional[int] = None
@@ -453,6 +454,7 @@ async def upload_novel(
     
     return UploadResponse(
         collection_name=collection_name,
+        title=novel_title,
         status="queued",
         message="小说已加入处理队列",
         estimated_time=estimated_time
