@@ -94,22 +94,32 @@ const App: React.FC = () => {
         }
     }, [activeTab]);
 
-    const loadGraph = async () => {
-        if (!currentCollection) {
-            console.log("No collection selected, skipping graph load");
-            return;
-        }
-        setIsGraphLoading(true);
-        try {
-            const data = await fetchKnowledgeGraph(currentCollection);
-            setGraphData(data);
-            if (activeTab === 'graph') renderGraph(data);
-        } catch (e) {
-            console.error("加载图谱失败", e);
-        } finally {
-            setIsGraphLoading(false);
-        }
-    };
+    const clearGraph = () => {
+    // 清理旧的 G6 图谱实例
+    if (graphRef.current) {
+        graphRef.current.destroy();
+        graphRef.current = null;
+    }
+    // 清空图谱数据
+    setGraphData(null);
+};
+
+const loadGraph = async () => {
+    if (!currentCollection) {
+        console.log("No collection selected, skipping graph load");
+        return;
+    }
+    setIsGraphLoading(true);
+    try {
+        const data = await fetchKnowledgeGraph(currentCollection);
+        setGraphData(data);
+        if (activeTab === 'graph') renderGraph(data);
+    } catch (e) {
+        console.error("加载图谱失败", e);
+    } finally {
+        setIsGraphLoading(false);
+    }
+};
 
     // Novel Management Functions
     const loadNovelsList = async () => {
@@ -192,10 +202,13 @@ const App: React.FC = () => {
                 await loadNovelsList();
                 // 如果删除的是当前小说，切换到第一个可用小说
                 if (currentCollection === collectionName) {
+                    clearGraph();  // 清理旧图谱
                     const remaining = novels.filter(n => n.collection_name !== collectionName);
                     if (remaining.length > 0) {
                         setCurrentCollection(remaining[0].collection_name);
                         loadGraph();
+                    } else {
+                        setCurrentCollection('');
                     }
                 }
             } catch (e) {
@@ -208,7 +221,7 @@ const App: React.FC = () => {
     const handleSelectNovel = (collectionName: string) => {
         if (currentCollection === collectionName) return;
         setCurrentCollection(collectionName);
-        setGraphData(null);
+        clearGraph();  // 清理旧图谱
         loadGraph();
     };
 
@@ -233,12 +246,16 @@ const App: React.FC = () => {
     }, []);
 
     const renderGraph = (data: any) => {
-        if (!graphContainer.current || data.nodes?.length === 0) return;
+        if (!graphContainer.current) return;
 
-        // Cleanup old graph
+        // Cleanup old graph first (before checking data)
         if (graphRef.current) {
             graphRef.current.destroy();
+            graphRef.current = null;
         }
+
+        // Return early if no data
+        if (data.nodes?.length === 0) return;
 
         graphRef.current = new G6.Graph({
             container: graphContainer.current,
@@ -637,8 +654,24 @@ const App: React.FC = () => {
                             )}
                             {graphData?.nodes?.length === 0 && !isGraphLoading && (
                                 <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
-                                    <Network className="w-12 h-12 mb-4 opacity-20" />
-                                    <p className="text-sm">知识图谱尚在后台生成或未开启，暂无展示内容。</p>
+                                    {(() => {
+                                        const currentNovel = novels.find(n => n.collection_name === currentCollection);
+                                        const isProcessing = currentNovel?.status === 'processing';
+                                        return (
+                                            <>
+                                                {isProcessing ? (
+                                                    <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-amber-400" />
+                                                ) : (
+                                                    <Network className="w-12 h-12 mb-4 opacity-20" />
+                                                )}
+                                                <p className="text-sm">
+                                                    {isProcessing 
+                                                        ? '知识图谱正在生成中，请稍候...' 
+                                                        : '知识图谱暂无数据，可能小说内容较短或未检测到实体。'}
+                                                </p>
+                                            </>
+                                        );
+                                    })()}
                                 </div>
                             )}
                             <div ref={graphContainer} className="w-full h-full" />
