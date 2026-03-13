@@ -2,6 +2,7 @@
 小说上传和管理 API 端点
 """
 import os
+import re
 import time
 import asyncio
 import httpx
@@ -102,6 +103,58 @@ async def validate_upload_file(file: UploadFile) -> None:
     await file.seek(0)
 
 
+def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 500) -> list[str]:
+    """
+    智能分段函数：
+    - 优先在段落边界（双换行符）分割
+    - 如果段落太短，与下一段合并
+    - 如果段落太长，按句子强制分割
+    """
+    chunks = []
+    
+    # 先按双换行符分割成段落
+    paragraphs = content.split("\n\n")
+    current_chunk = ""
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+            
+        # 如果当前段落 + 当前chunk 不超过最大长度，合并
+        if len(current_chunk) + len(para) + 2 <= max_length:
+            current_chunk += (("\n\n" if current_chunk else "") + para)
+        else:
+            # 当前chunk已满，需要处理
+            if len(current_chunk) >= min_length:
+                chunks.append(current_chunk)
+            
+            # 如果单个段落超过最大长度，需要强制分割
+            if len(para) > max_length:
+                # 按句子分割
+                sentences = re.split(r'[。！？\n]', para)
+                temp_chunk = ""
+                for sentence in sentences:
+                    sentence = sentence.strip()
+                    if not sentence:
+                        continue
+                    if len(temp_chunk) + len(sentence) + 1 <= max_length:
+                        temp_chunk += (sentence + "。")
+                    else:
+                        if len(temp_chunk) >= min_length:
+                            chunks.append(temp_chunk)
+                        temp_chunk = sentence + "。"
+                current_chunk = temp_chunk
+            else:
+                current_chunk = para
+    
+    # 处理最后一个chunk
+    if len(current_chunk) >= min_length:
+        chunks.append(current_chunk)
+    
+    return chunks
+
+
 async def process_novel_task(
     collection_name: str,
     content: str,
@@ -117,8 +170,8 @@ async def process_novel_task(
         # 更新状态：开始处理
         status_store[collection_name]["status"] = "processing"
         
-        # 按双换行符分段
-        chunks = [c.strip() for c in content.split("\n\n") if len(c.strip()) > 20]
+        # 使用智能分段策略
+        chunks = smart_chunk_content(content, min_length=100, max_length=500)
         total_chunks = len(chunks)
         status_store[collection_name]["total_chunks"] = total_chunks
         
