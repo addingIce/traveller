@@ -195,18 +195,31 @@ async def process_novel_task(
         chunks = smart_chunk_content(content, min_length=100, max_length=500)
         total_chunks = len(chunks)
         status_store[collection_name]["total_chunks"] = total_chunks
-        
-        try:
-            print(f"[DEBUG] Getting or creating session: {collection_name}")
-            session = await client.memory.get_session(collection_name)
-            print(f"[DEBUG] Session found: {collection_name}")
-        except Exception as e:
-            print(f"[DEBUG] Session not found, creating new one: {e}")
-            await client.memory.add_session(
-                session_id=collection_name,
-                metadata={"type": "novel_ingest", "source": novel_title}
-            )
-            print(f"[DEBUG] Session created: {collection_name}")
+
+        # 在链路不稳定时对 get_session/add_session 做轻量重试，避免瞬断导致整本小说失败
+        session_ready = False
+        session_attempts = 3
+        for attempt in range(1, session_attempts + 1):
+            try:
+                print(f"[DEBUG] Getting or creating session ({attempt}/{session_attempts}): {collection_name}")
+                try:
+                    await client.memory.get_session(collection_name)
+                    print(f"[DEBUG] Session found: {collection_name}")
+                except Exception as e:
+                    print(f"[DEBUG] Session get failed, creating new one: {e}")
+                    await client.memory.add_session(
+                        session_id=collection_name,
+                        metadata={"type": "novel_ingest", "source": novel_title}
+                    )
+                    print(f"[DEBUG] Session created: {collection_name}")
+                session_ready = True
+                break
+            except Exception as e:
+                print(f"[WARNING] Session prepare failed ({attempt}/{session_attempts}): {e}")
+                if attempt < session_attempts:
+                    await asyncio.sleep(2 ** (attempt - 1))
+        if not session_ready:
+            raise RuntimeError("Zep 会话初始化失败（服务可能暂时不可用或网络不稳定）")
         
         batch_size = 2
         for i in range(0, len(chunks), batch_size):

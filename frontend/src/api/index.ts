@@ -50,10 +50,12 @@ export const chatInteract = async (sessionId: string, collectionName: string, me
 };
 
 // 小说管理相关接口和类型
+export type NovelStatus = 'queued' | 'processing' | 'completed' | 'extracting' | 'ready' | 'failed' | 'unknown';
+
 export interface NovelInfo {
     collection_name: string;
     title: string;
-    status: string;  // processing/completed/failed
+    status: NovelStatus;
     created_at: string;
     chunks_count: number;
 }
@@ -68,7 +70,7 @@ export interface UploadResponse {
 
 export interface ProcessStatusResponse {
     collection_name: string;
-    status: string;
+    status: NovelStatus;
     progress: number;
     chunks_processed: number;
     total_chunks: number;

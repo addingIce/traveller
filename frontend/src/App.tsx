@@ -1,10 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
+const TERMINAL_NOVEL_STATUSES = new Set<NovelStatus>(['ready', 'failed']);
+const IN_PROGRESS_NOVEL_STATUSES = new Set<NovelStatus>(['queued', 'processing', 'completed', 'extracting']);
+const NOVEL_STATUS_META: Partial<Record<NovelStatus, { color: string; label: string }>> = {
+    ready: { color: 'text-emerald-400', label: '✓ 就绪' },
+    completed: { color: 'text-sky-400', label: '📝 分块完成' },
+    extracting: { color: 'text-purple-400', label: '🔄 实体提取中' },
+    processing: { color: 'text-amber-400', label: '⏳ 处理中' },
+    queued: { color: 'text-slate-400', label: '⏸️ 排队中' },
+    failed: { color: 'text-red-400', label: '✗ 失败' },
+};
 
 const getSessionId = () => {
     const params = new URLSearchParams(window.location.search);
@@ -73,11 +83,11 @@ const App: React.FC = () => {
         loadNovelsList();
     }, []);
 
-    // Poll novels list status when there are novels in processing/completed/extracting state
+    // Poll novels list status when there are in-progress novels
     useEffect(() => {
         const interval = setInterval(async () => {
             const hasInProgressNovels = novels.some(
-                n => n.status === 'processing' || n.status === 'completed' || n.status === 'extracting'
+                n => IN_PROGRESS_NOVEL_STATUSES.has(n.status)
             );
             if (hasInProgressNovels) {
                 await loadNovelsList();
@@ -369,7 +379,7 @@ const scrollToSection = (sectionId: string) => {
         const interval = setInterval(async () => {
             try {
                 const status = await getNovelStatus(collectionName);
-                if (status.status !== 'processing') {
+                if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
                     clearInterval(interval);
                     await loadNovelsList();
                 }
@@ -640,22 +650,8 @@ const scrollToSection = (sectionId: string) => {
                                         <div className="flex-1 min-w-0" onClick={() => handleSelectNovel(novel.collection_name)}>
                                             <div className="font-medium truncate">{novel.title}</div>
                                             <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
-                                                <span className={
-                                                    novel.status === 'ready' ? 'text-emerald-400' :
-                                                    novel.status === 'completed' ? 'text-sky-400' :
-                                                    novel.status === 'extracting' ? 'text-purple-400' :
-                                                    novel.status === 'processing' ? 'text-amber-400' :
-                                                    novel.status === 'checking' ? 'text-blue-400' :
-                                                    novel.status === 'queued' ? 'text-slate-400' :
-                                                    'text-red-400'
-                                                }>
-                                                    {novel.status === 'ready' ? '✓ 就绪' :
-                                                     novel.status === 'completed' ? '📝 分块完成' :
-                                                     novel.status === 'extracting' ? '🔄 实体提取中' :
-                                                     novel.status === 'processing' ? '⏳ 处理中' :
-                                                     novel.status === 'checking' ? '🔍 状态检查中' :
-                                                     novel.status === 'queued' ? '⏸️ 排队中' :
-                                                     '✗ 失败'}
+                                                <span className={NOVEL_STATUS_META[novel.status]?.color || 'text-red-400'}>
+                                                    {NOVEL_STATUS_META[novel.status]?.label || '✗ 失败'}
                                                 </span>
                                                 <span>• {novel.chunks_count} 个片段</span>
                                             </div>
@@ -671,7 +667,7 @@ const scrollToSection = (sectionId: string) => {
                                             <Trash2 className="w-3 h-3" />
                                         </button>
                                     </div>
-                                    {novel.status === 'processing' && (
+                                    {IN_PROGRESS_NOVEL_STATUSES.has(novel.status) && (
                                         <div className="mt-2 w-full bg-black/30 rounded-full h-1">
                                             <div className="bg-sky-500 h-1 rounded-full animate-pulse" style={{ width: '50%' }} />
                                         </div>

@@ -73,8 +73,9 @@ async def lifespan(app: FastAPI):
         app.state.processing_tasks = {}
     yield
     # 关闭时执行
-    if getattr(app.state, "zep", None):
-        await app.state.zep.close()
+    zep_client = getattr(app.state, "zep", None)
+    if zep_client and hasattr(zep_client, "close"):
+        await zep_client.close()
     if getattr(app.state, "neo4j_driver", None):
         await app.state.neo4j_driver.close()
 

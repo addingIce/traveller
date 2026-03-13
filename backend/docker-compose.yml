@@ -20,6 +20,12 @@ services:
     image: neo4j:5-community
     environment:
       - NEO4J_AUTH=${NEO4J_USER}/${NEO4J_PASSWORD}
+      - NEO4J_dbms_jvm_additional=-Dorg.apache.lucene.maxClauseCount=4096
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u ${NEO4J_USER} -p ${NEO4J_PASSWORD} 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -48,8 +54,10 @@ services:
     ports:
       - "8003:8000"
     depends_on:
-      - neo4j
-      - zep
+      neo4j:
+        condition: service_healthy
+      zep:
+        condition: service_started
 
   db:
     image: ankane/pgvector:latest # 使用 pgvector 镜像，因为 Zep 存储需要向量支持

@@ -270,22 +270,56 @@ async def get_novel_status(collection_name: str, request: Request):
     获取指定小说的处理状态
     """
     status_store = getattr(request.app.state, "processing_tasks", {})
-    
-    if collection_name not in status_store:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="小说不存在"
+    driver = getattr(request.app.state, "neo4j_driver", None)
+
+    # 1) 优先返回内存中的实时状态
+    if collection_name in status_store:
+        task_info = status_store[collection_name]
+        return ProcessStatusResponse(
+            collection_name=collection_name,
+            status=task_info.get("status", "unknown"),
+            progress=task_info.get("progress", 0.0),
+            chunks_processed=task_info.get("chunks_processed", 0),
+            total_chunks=task_info.get("total_chunks", 0),
+            error_message=task_info.get("error_message")
         )
-    
-    task_info = status_store[collection_name]
-    
-    return ProcessStatusResponse(
-        collection_name=collection_name,
-        status=task_info.get("status", "unknown"),
-        progress=task_info.get("progress", 0.0),
-        chunks_processed=task_info.get("chunks_processed", 0),
-        total_chunks=task_info.get("total_chunks", 0),
-        error_message=task_info.get("error_message")
+
+    # 2) 内存没有时回退到 Neo4j 的 Novel 状态
+    if driver:
+        try:
+            async with driver.session() as session:
+                query = """
+                MATCH (n:Novel {collection_name: $collection_name})
+                RETURN n.status as status
+                LIMIT 1
+                """
+                result = await session.run(query, collection_name=collection_name)
+                record = await result.single()
+
+                if record:
+                    db_status = record["status"] or "unknown"
+                    if db_status in {"ready", "completed", "failed"}:
+                        progress = 100.0
+                    elif db_status in {"processing", "extracting", "queued"}:
+                        progress = 0.0
+                    else:
+                        progress = 0.0
+
+                    return ProcessStatusResponse(
+                        collection_name=collection_name,
+                        status=db_status,
+                        progress=progress,
+                        chunks_processed=0,
+                        total_chunks=0,
+                        error_message=None
+                    )
+        except Exception as e:
+            print(f"[ERROR] Failed to get status from Neo4j: {e}")
+
+    # 3) 内存和数据库都没有，返回不存在
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="小说不存在"
     )
 
 

@@ -170,7 +170,25 @@ _original_execute = neo4j.AsyncDriver.execute_query
 async def _hooked_execute(self, query_, *args, **kwargs):
     params = kwargs.get('parameters_') or kwargs.get('params') or kwargs.get('parameters') or (args[0] if args else {})
     _ensure_vectors(str(query_), params)
-    return await _original_execute(self, query_, *args, **kwargs)
+    try:
+        return await _original_execute(self, query_, *args, **kwargs)
+    except Exception as e:
+        query_text = str(query_ or "")
+        error_text = str(e)
+        if (
+            "TooManyClauses" in error_text
+            and (
+                "db.index.fulltext.queryRelationships" in query_text
+                or "db.index.fulltext.queryNodes" in query_text
+            )
+        ):
+            logger.warning(
+                "Neo4j fulltext query hit TooManyClauses; falling back to empty result. query=%s",
+                query_text.splitlines()[0][:120],
+            )
+            # 与 neo4j AsyncDriver.execute_query 返回结构保持一致: (records, summary, keys)
+            return [], None, []
+        raise
 neo4j.AsyncDriver.execute_query = _hooked_execute
 
 
