@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel } from './api';
-import { Search, Info, Target, MessageSquare } from 'lucide-react';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, SystemConfig } from './api';
+import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
 
@@ -24,7 +24,7 @@ const getSessionId = () => {
 const sessionId = getSessionId();
 
 const App: React.FC = () => {
-    const [activeTab, setActiveTab] = useState<'graph' | 'plot'>('plot');
+    const [activeTab, setActiveTab] = useState<'graph' | 'plot' | 'config'>('plot');
     const [graphData, setGraphData] = useState<any>(null);
     const [isGraphLoading, setIsGraphLoading] = useState(false);
     const [chatInput, setChatInput] = useState("");
@@ -48,6 +48,12 @@ const App: React.FC = () => {
     const [uploadTitle, setUploadTitle] = useState('');
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
+
+    // System Config State
+    const [config, setConfig] = useState<SystemConfig | null>(null);
+    const [isConfigLoading, setIsConfigLoading] = useState(false);
+    const [configSaveStatus, setConfigSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [selectedPreset, setSelectedPreset] = useState<string>('');
 
     const graphContainer = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
@@ -76,6 +82,11 @@ const App: React.FC = () => {
 
         return () => clearInterval(interval);
     }, [novels]);
+
+    // Load config on component mount
+    useEffect(() => {
+        loadConfig();
+    }, []);
 
     // Auto-select first completed novel when novels are loaded
     useEffect(() => {
@@ -116,6 +127,63 @@ const App: React.FC = () => {
     }
     // 清空图谱数据
     setGraphData(null);
+};
+
+// Config Management Functions
+const loadConfig = async () => {
+    setIsConfigLoading(true);
+    try {
+        const configData = await getConfig();
+        setConfig(configData);
+    } catch (error) {
+        console.error("加载配置失败", error);
+    } finally {
+        setIsConfigLoading(false);
+    }
+};
+
+const handleSaveConfig = async () => {
+    if (!config) return;
+    
+    setConfigSaveStatus('saving');
+    try {
+        await updateConfig(config);
+        setConfigSaveStatus('saved');
+        setTimeout(() => setConfigSaveStatus('idle'), 2000);
+    } catch (error) {
+        console.error("保存配置失败", error);
+        setConfigSaveStatus('error');
+    }
+};
+
+const handleResetConfig = async () => {
+    try {
+        const response = await resetConfig();
+        setConfig(response.config);
+        setConfigSaveStatus('saved');
+        setTimeout(() => setConfigSaveStatus('idle'), 2000);
+    } catch (error) {
+        console.error("重置配置失败", error);
+        setConfigSaveStatus('error');
+    }
+};
+
+const handleApplyPreset = async (presetKey: string) => {
+    try {
+        const presets = await getConfigPresets();
+        const preset = presets[presetKey];
+        if (preset && preset.config) {
+            setConfig(preset.config);
+            setSelectedPreset(presetKey);
+            setConfigSaveStatus('saving');
+            await updateConfig(preset.config);
+            setConfigSaveStatus('saved');
+            setTimeout(() => setConfigSaveStatus('idle'), 2000);
+        }
+    } catch (error) {
+        console.error("应用预设失败", error);
+        setConfigSaveStatus('error');
+    }
 };
 
 const loadGraph = async () => {
@@ -661,6 +729,12 @@ const loadGraph = async () => {
                                 >
                                     后台 Zep 物理图谱
                                 </button>
+                                <button
+                                    onClick={() => setActiveTab('config')}
+                                    className={`px-4 py-1.5 rounded-md text-sm transition-all ${activeTab === 'config' ? 'bg-emerald-500 text-white shadow-lg shadow-emerald-500/20' : 'text-slate-400 hover:text-white'}`}
+                                >
+                                    系统配置
+                                </button>
                             </div>
                         </div>
 
@@ -807,6 +881,421 @@ const loadGraph = async () => {
                                     </button>
                                 </form>
                             </div>
+                        </div>
+
+                        {/* Config Body */}
+                        <div className="relative bg-black/20 flex-1 overflow-hidden" style={{ display: activeTab === 'config' ? 'block' : 'none' }}>
+                            {isConfigLoading && (
+                                <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-500 backdrop-blur-md bg-black/40">
+                                    <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-emerald-400" />
+                                    <p className="text-sm tracking-wider">正在加载配置...</p>
+                                </div>
+                            )}
+                            {config && (
+                                <div className="h-full overflow-y-auto p-6 custom-scrollbar">
+                                    <div className="max-w-4xl mx-auto space-y-6">
+                                        {/* Header */}
+                                        <div className="flex justify-between items-center mb-6">
+                                            <div>
+                                                <h2 className="text-2xl font-bold text-white flex items-center gap-2">
+                                                    <Settings className="w-6 h-6 text-emerald-400" />
+                                                    系统配置
+                                                </h2>
+                                                <p className="text-sm text-slate-400 mt-1">配置系统参数，调整后立即生效</p>
+                                            </div>
+                                            <div className="flex gap-3">
+                                                <button
+                                                    onClick={handleResetConfig}
+                                                    className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all flex items-center gap-2"
+                                                >
+                                                    <RotateCcw className="w-4 h-4" />
+                                                    重置
+                                                </button>
+                                                <button
+                                                    onClick={handleSaveConfig}
+                                                    disabled={configSaveStatus === 'saving'}
+                                                    className="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white text-sm transition-all flex items-center gap-2 disabled:opacity-50"
+                                                >
+                                                    {configSaveStatus === 'saving' ? (
+                                                        <>
+                                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                                            保存中...
+                                                        </>
+                                                    ) : configSaveStatus === 'saved' ? (
+                                                        <>
+                                                            <CheckCircle className="w-4 h-4" />
+                                                            已保存
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <Save className="w-4 h-4" />
+                                                            保存配置
+                                                        </>
+                                                    )}
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Presets */}
+                                        <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6">
+                                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                                <Target className="w-5 h-5 text-sky-400" />
+                                                配置预设
+                                            </h3>
+                                            <div className="grid grid-cols-3 gap-4">
+                                                <button
+                                                    onClick={() => handleApplyPreset('default')}
+                                                    className={`p-4 rounded-xl border transition-all ${
+                                                        selectedPreset === 'default'
+                                                            ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
+                                                            : 'bg-white/5 border-white/10 hover:border-sky-500/50 text-slate-300'
+                                                    }`}
+                                                >
+                                                    <div className="font-medium">默认配置</div>
+                                                    <div className="text-xs text-slate-500 mt-1">适合大多数场景</div>
+                                                </button>
+                                                <button
+                                                    onClick={() => handleApplyPreset('high_concurrency')}
+                                                    className={`p-4 rounded-xl border transition-all ${
+                                                        selectedPreset === 'high_concurrency'
+                                                            ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
+                                                            : 'bg-white/5 border-white/10 hover:border-sky-500/50 text-slate-300'
+                                                    }`}
+                                                >
+                                                    <div className="font-medium">高并发模式</div>
+                                                    <div className="text-xs text-slate-500 mt-1">无限制 LLM</div>
+                                                </button>
+                                                <button
+                                                    onClick={() => handleApplyPreset('low_latency')}
+                                                    className={`p-4 rounded-xl border transition-all ${
+                                                        selectedPreset === 'low_latency'
+                                                            ? 'bg-emerald-500/10 border-emerald-500/50 text-emerald-400'
+                                                            : 'bg-white/5 border-white/10 hover:border-sky-500/50 text-slate-300'
+                                                    }`}
+                                                >
+                                                    <div className="font-medium">低延迟模式</div>
+                                                    <div className="text-xs text-slate-500 mt-1">快速响应</div>
+                                                </button>
+                                            </div>
+                                        </div>
+
+                                        {/* Performance Config */}
+                                        <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6">
+                                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                                <Brain className="w-5 h-5 text-purple-400" />
+                                                性能参数
+                                            </h3>
+                                            <div className="grid grid-cols-2 gap-6">
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">LLM 最大并发数</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.performance.graphiti_llm_max_concurrency}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                graphiti_llm_max_concurrency: parseInt(e.target.value) || 1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">同时发送给 LLM 的最大请求数</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">LLM 请求间隔（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={config.performance.graphiti_llm_min_interval}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                graphiti_llm_min_interval: parseFloat(e.target.value) || 0.1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">两次请求之间的最小间隔</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">批量写入大小</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.performance.batch_size}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                batch_size: parseInt(e.target.value) || 1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">每批写入 Zep 的消息数量</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">批次间延迟（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        step="0.1"
+                                                        value={config.performance.batch_delay}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                batch_delay: parseFloat(e.target.value) || 0.1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">每批写入后的等待时间</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">轮询间隔（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.performance.poll_interval}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                poll_interval: parseInt(e.target.value) || 1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">小说列表状态更新间隔</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">状态轮询间隔（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.performance.status_poll_interval}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            performance: {
+                                                                ...config.performance,
+                                                                status_poll_interval: parseInt(e.target.value) || 1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">单个小说状态更新间隔</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Business Config */}
+                                        <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6">
+                                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                                <PenTool className="w-5 h-5 text-orange-400" />
+                                                业务参数
+                                            </h3>
+                                            <div className="grid grid-cols-2 gap-6">
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">最大文件大小（MB）</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.business.max_file_size_mb}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            business: {
+                                                                ...config.business,
+                                                                max_file_size_mb: parseInt(e.target.value) || 1
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">上传文件的最大大小</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">分段最小长度</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.business.chunk_min_length}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            business: {
+                                                                ...config.business,
+                                                                chunk_min_length: parseInt(e.target.value) || 10
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">文本分段的最小字符数</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">分段最大长度</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.business.chunk_max_length}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            business: {
+                                                                ...config.business,
+                                                                chunk_max_length: parseInt(e.target.value) || 100
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">文本分段的最大字符数</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">Zep 超时时间（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.business.zep_timeout}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            business: {
+                                                                ...config.business,
+                                                                zep_timeout: parseInt(e.target.value) || 60
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">Zep API 调用的超时时间</p>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <label className="text-sm text-slate-300">Neo4j 超时时间（秒）</label>
+                                                    <input
+                                                        type="number"
+                                                        value={config.business.neo4j_timeout}
+                                                        onChange={(e) => setConfig({
+                                                            ...config,
+                                                            business: {
+                                                                ...config.business,
+                                                                neo4j_timeout: parseInt(e.target.value) || 30
+                                                            }
+                                                        })}
+                                                        className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                    />
+                                                    <p className="text-xs text-slate-500">Neo4j 操作的超时时间</p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* API Config */}
+                                        <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6">
+                                            <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+                                                <Network className="w-5 h-5 text-cyan-400" />
+                                                API 配置
+                                            </h3>
+                                            <div className="space-y-6">
+                                                <div className="grid grid-cols-2 gap-6">
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">LLM API Key</label>
+                                                        <input
+                                                            type="password"
+                                                            value={config.api.llm_api_key}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    llm_api_key: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="sk-..."
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">LLM Base URL</label>
+                                                        <input
+                                                            type="text"
+                                                            value={config.api.llm_base_url}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    llm_base_url: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="https://api.openai.com/v1"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">LLM 模型</label>
+                                                        <input
+                                                            type="text"
+                                                            value={config.api.llm_model}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    llm_model: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="gpt-4o"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="grid grid-cols-2 gap-6">
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">Embedding API Key</label>
+                                                        <input
+                                                            type="password"
+                                                            value={config.api.embedding_api_key}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    embedding_api_key: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="sk-..."
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">Embedding Base URL</label>
+                                                        <input
+                                                            type="text"
+                                                            value={config.api.embedding_base_url}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    embedding_base_url: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                                                        />
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <label className="text-sm text-slate-300">Embedding 模型</label>
+                                                        <input
+                                                            type="text"
+                                                            value={config.api.embedding_model}
+                                                            onChange={(e) => setConfig({
+                                                                ...config,
+                                                                api: {
+                                                                    ...config.api,
+                                                                    embedding_model: e.target.value
+                                                                }
+                                                            })}
+                                                            className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
+                                                            placeholder="text-embedding-v4"
+                                                        />
+                                                    </div>
+                                                </div>
+                                                <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-xl p-4 flex items-start gap-3">
+                                                    <Info className="w-5 h-5 text-emerald-400 mt-0.5 flex-shrink-0" />
+                                                    <div className="text-sm text-slate-300">
+                                                        <p className="font-medium text-emerald-400 mb-1">配置提示</p>
+                                                        <p>API Key 将保存到后端 .env 文件中。修改后需要重启 Docker 服务才能完全生效。</p>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
                         </div>
 
                     </div>
