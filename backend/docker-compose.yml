@@ -9,9 +9,9 @@ services:
     volumes:
       - ./zep.yaml:/app/zep.yaml
     environment:
-      - ZEP_NLP_OPENAI_API_KEY=sk-c264868eb9bee420aa14c3c376c32121
-      - ZEP_NLP_OPENAI_BASE_URL=https://apis.iflow.cn/v1
-      - ZEP_NLP_OPENAI_MODEL=deepseek-v3
+      - ZEP_NLP_OPENAI_API_KEY=${ZEP_NLP_OPENAI_API_KEY}
+      - ZEP_NLP_OPENAI_BASE_URL=${ZEP_NLP_OPENAI_BASE_URL}
+      - ZEP_NLP_OPENAI_MODEL=${ZEP_NLP_OPENAI_MODEL}
     depends_on:
       db:
         condition: service_healthy
@@ -19,7 +19,7 @@ services:
   neo4j:
     image: neo4j:5-community
     environment:
-      - NEO4J_AUTH=neo4j/password123
+      - NEO4J_AUTH=${NEO4J_USER}:${NEO4J_PASSWORD}
     ports:
       - "7474:7474"
       - "7687:7687"
@@ -27,20 +27,20 @@ services:
   graphiti:
     image: zepai/graphiti:latest
     environment:
-      - OPENAI_API_KEY=sk-c264868eb9bee420aa14c3c376c32121
-      - OPENAI_BASE_URL=https://apis.iflow.cn/v1
-      - MODEL_NAME=deepseek-v3
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_BASE_URL=${OPENAI_BASE_URL}
+      - MODEL_NAME=${MODEL_NAME}
       
       # 专门为 Embedding 指定不同的 URL (如 ModelScope)
-      - EMBEDDING_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-      - EMBEDDING_OPENAI_API_KEY=sk-576e9b72d1c94041abbde994a614fd58
-      - EMBEDDING_MODEL_NAME=text-embedding-v4
-      - GRAPHITI_LLM_MAX_CONCURRENCY=1
-      - GRAPHITI_LLM_MIN_INTERVAL=0.5
+      - EMBEDDING_OPENAI_BASE_URL=${EMBEDDING_OPENAI_BASE_URL}
+      - EMBEDDING_OPENAI_API_KEY=${EMBEDDING_OPENAI_API_KEY}
+      - EMBEDDING_MODEL_NAME=${EMBEDDING_MODEL_NAME}
+      - GRAPHITI_LLM_MAX_CONCURRENCY=${GRAPHITI_LLM_MAX_CONCURRENCY}
+      - GRAPHITI_LLM_MIN_INTERVAL=${GRAPHITI_LLM_MIN_INTERVAL}
       
       - NEO4J_URI=bolt://neo4j:7687
-      - NEO4J_USER=neo4j
-      - NEO4J_PASSWORD=password123
+      - NEO4J_USER=${NEO4J_USER}
+      - NEO4J_PASSWORD=${NEO4J_PASSWORD}
     volumes:
       - ./zep_graphiti.py:/app/graph_service/zep_graphiti.py
       - ./ingest.py:/app/graph_service/routers/ingest.py
@@ -54,11 +54,11 @@ services:
   db:
     image: ankane/pgvector:latest # 使用 pgvector 镜像，因为 Zep 存储需要向量支持
     environment:
-      - POSTGRES_USER=zep
-      - POSTGRES_PASSWORD=zep
-      - POSTGRES_DB=zep
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U zep"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
       interval: 5s
       timeout: 5s
       retries: 5

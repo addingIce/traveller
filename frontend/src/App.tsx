@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, SystemConfig } from './api';
-import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle } from 'lucide-react';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
+import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RestartCircle } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
 
@@ -55,6 +55,7 @@ const App: React.FC = () => {
     const [configSaveStatus, setConfigSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [selectedPreset, setSelectedPreset] = useState<string>('');
     const [showConfigModal, setShowConfigModal] = useState(false);
+    const [isRestarting, setIsRestarting] = useState(false);
 
     const graphContainer = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
@@ -201,6 +202,27 @@ const handleApplyPreset = async (presetKey: string) => {
     } catch (error) {
         console.error("应用预设失败", error);
         setConfigSaveStatus('error');
+    }
+};
+
+const handleRestartServices = async () => {
+    if (!confirm('确定要重启 Docker 服务吗？这将导致服务短暂中断。')) {
+        return;
+    }
+
+    setIsRestarting(true);
+    try {
+        const response = await restartServices();
+        if (response.success) {
+            alert('服务重启成功！配置已生效。');
+        } else {
+            alert('服务重启失败：' + response.message);
+        }
+    } catch (error) {
+        console.error("重启服务失败", error);
+        alert('重启服务时出错，请检查控制台日志。');
+    } finally {
+        setIsRestarting(false);
     }
 };
 
@@ -924,6 +946,23 @@ const loadGraph = async () => {
                                 <p className="text-sm text-slate-400 mt-1">配置系统参数，调整后立即生效</p>
                             </div>
                             <div className="flex gap-3">
+                                <button
+                                    onClick={handleRestartServices}
+                                    disabled={isRestarting}
+                                    className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm transition-all flex items-center gap-2 disabled:opacity-50"
+                                >
+                                    {isRestarting ? (
+                                        <>
+                                            <Loader2 className="w-4 h-4 animate-spin" />
+                                            重启中...
+                                        </>
+                                    ) : (
+                                        <>
+                                            <RestartCircle className="w-4 h-4" />
+                                            重启服务
+                                        </>
+                                    )}
+                                </button>
                                 <button
                                     onClick={handleResetConfig}
                                     className="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all flex items-center gap-2"

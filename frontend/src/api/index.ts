@@ -156,3 +156,13 @@ export const getConfigPresets = async (): Promise<Record<string, any>> => {
     const { data } = await apiClient.get('/config/presets');
     return data;
 };
+
+export const restartServices = async (): Promise<{ success: boolean; message: string; output?: string }> => {
+    const { data } = await apiClient.post('/config/restart');
+    return data;
+};
+
+export const getServicesStatus = async (): Promise<{ success: boolean; status: string }> => {
+    const { data } = await apiClient.get('/config/services/status');
+    return data;
+};

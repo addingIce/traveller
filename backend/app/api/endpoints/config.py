@@ -119,12 +119,33 @@ def update_env_file(config: SystemConfig):
         
         # 更新环境变量
         env_vars = {
+            # LLM 配置
             "OPENAI_API_KEY": config.api.llm_api_key,
             "OPENAI_BASE_URL": config.api.llm_base_url,
             "MODEL_DIRECTOR": config.api.llm_model,
+            "MODEL_PARSER": config.api.llm_model,  # 使用相同的模型
+            "MODEL_NAME": config.api.llm_model,  # Graphiti 模型
+            # Embedding 配置
             "EMBEDDING_OPENAI_API_KEY": config.api.embedding_api_key,
             "EMBEDDING_OPENAI_BASE_URL": config.api.embedding_base_url,
             "EMBEDDING_MODEL_NAME": config.api.embedding_model,
+            # Zep NLP 配置
+            "ZEP_NLP_OPENAI_API_KEY": config.api.llm_api_key,  # 使用相同的 API Key
+            "ZEP_NLP_OPENAI_BASE_URL": config.api.llm_base_url,  # 使用相同的 Base URL
+            "ZEP_NLP_OPENAI_MODEL": config.api.llm_model,  # 使用相同的模型
+            # 性能配置
+            "GRAPHITI_LLM_MAX_CONCURRENCY": str(config.performance.graphiti_llm_max_concurrency),
+            "GRAPHITI_LLM_MIN_INTERVAL": str(config.performance.graphiti_llm_min_interval),
+            "BATCH_SIZE": str(config.performance.batch_size),
+            "BATCH_DELAY": str(config.performance.batch_delay),
+            "POLL_INTERVAL": str(config.performance.poll_interval),
+            "STATUS_POLL_INTERVAL": str(config.performance.status_poll_interval),
+            # 业务配置
+            "MAX_FILE_SIZE_MB": str(config.business.max_file_size_mb),
+            "CHUNK_MIN_LENGTH": str(config.business.chunk_min_length),
+            "CHUNK_MAX_LENGTH": str(config.business.chunk_max_length),
+            "ZEP_TIMEOUT": str(config.business.zep_timeout),
+            "NEO4J_TIMEOUT": str(config.business.neo4j_timeout),
         }
         
         # 更新或添加环境变量
@@ -262,6 +283,67 @@ async def get_config_presets():
         }
     }
     return presets
+
+@router.post("/config/restart")
+async def restart_services():
+    """重启 Docker 服务以使配置生效"""
+    import subprocess
+    
+    try:
+        # 执行 docker-compose restart
+        result = subprocess.run(
+            ["docker-compose", "restart"],
+            cwd=str(DOCKER_COMPOSE_FILE.parent),
+            capture_output=True,
+            text=True,
+            timeout=120
+        )
+        
+        if result.returncode == 0:
+            return {
+                "success": True,
+                "message": "Docker 服务重启成功",
+                "output": result.stdout
+            }
+        else:
+            raise HTTPException(
+                status_code=500,
+                detail=f"重启失败: {result.stderr}"
+            )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(
+            status_code=500,
+            detail="重启超时，请手动检查服务状态"
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"重启服务时出错: {str(e)}"
+        )
+
+@router.get("/config/services/status")
+async def get_services_status():
+    """获取 Docker 服务状态"""
+    import subprocess
+    
+    try:
+        result = subprocess.run(
+            ["docker-compose", "ps"],
+            cwd=str(DOCKER_COMPOSE_FILE.parent),
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        
+        return {
+            "success": True,
+            "status": result.stdout
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"获取服务状态失败: {str(e)}"
+        )
 
 # 初始化时加载配置
 try:
