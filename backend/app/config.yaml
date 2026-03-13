@@ -1,20 +1,20 @@
 api:
-  embedding_api_key: correct_embedding_key_666
-  embedding_base_url: https://correct-embedding.test.com/v1
-  embedding_model: correct-embedding-model
-  llm_api_key: correct_test_key_777
-  llm_base_url: https://correct-api.test.com/v1
-  llm_model: correct-test-model
+  embedding_api_key: sk-576e9b72d1c94041abbde994a614fd58
+  embedding_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  embedding_model: text-embedding-v4
+  llm_api_key: sk-c264868eb9bee420aa14c3c376c32121
+  llm_base_url: https://apis.iflow.cn/v1
+  llm_model: deepseek-v3
 business:
-  chunk_max_length: 1000
-  chunk_min_length: 250
-  max_file_size_mb: 50
-  neo4j_timeout: 90
-  zep_timeout: 600
+  chunk_max_length: 500
+  chunk_min_length: 100
+  max_file_size_mb: 10
+  neo4j_timeout: 30
+  zep_timeout: 300
 performance:
-  batch_delay: 0.2
-  batch_size: 8
-  graphiti_llm_max_concurrency: 15
-  graphiti_llm_min_interval: 0.05
-  poll_interval: 2
-  status_poll_interval: 1
+  batch_delay: 1.0
+  batch_size: 2
+  graphiti_llm_max_concurrency: 1
+  graphiti_llm_min_interval: 0.5
+  poll_interval: 5
+  status_poll_interval: 3
