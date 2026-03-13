@@ -179,6 +179,29 @@ async def get_novels_list(request: Request):
     status_store = getattr(request.app.state, "processing_tasks", {})
     
     novels = []
+    chunk_progress_statuses = {"processing"}
+
+    def resolve_chunks_count(status_value: str, task_info: dict, entity_count: int) -> int:
+        # 统一口径：处理中用 chunks_processed，其余回退 entity_count
+        if status_value in chunk_progress_statuses:
+            return int(task_info.get("chunks_processed", 0) or 0)
+        return int(entity_count or 0)
+
+    def merge_duplicate(existing: NovelInfo, incoming: NovelInfo) -> NovelInfo:
+        # 优先保留信息更完整的记录，避免显示 collection_name 作为标题
+        title = existing.title
+        if (not title or title.startswith("novel_")) and incoming.title and not incoming.title.startswith("novel_"):
+            title = incoming.title
+        created_at = existing.created_at or incoming.created_at
+        status = existing.status if existing.status != "unknown" else incoming.status
+        chunks_count = existing.chunks_count if existing.chunks_count > 0 else incoming.chunks_count
+        return NovelInfo(
+            collection_name=existing.collection_name,
+            title=title,
+            status=status,
+            created_at=created_at,
+            chunks_count=chunks_count,
+        )
     
     # 优先从 Neo4j 获取所有有数据的小说
     if driver:
@@ -209,7 +232,7 @@ async def get_novels_list(request: Request):
                     # 从 status_store 获取实时状态（如果在处理中）
                     task_info = status_store.get(collection_name, {})
                     status = task_info.get("status", novel_status)
-                    chunks_count = task_info.get("chunks_processed", entity_count)
+                    chunks_count = resolve_chunks_count(status, task_info, entity_count)
                     
                     novels.append(NovelInfo(
                         collection_name=collection_name,
@@ -222,9 +245,12 @@ async def get_novels_list(request: Request):
                 # 获取没有 Novel 节点的旧小说（只有 Entity 节点）
                 old_novels_query = """
                 MATCH (e:Entity)
-                WHERE e.group_id STARTS WITH 'novel_' 
-                  AND NOT EXISTS { (:Novel {collection_name: e.group_id}) }
-                RETURN DISTINCT e.group_id as group_id, COUNT(e) as entity_count
+                WHERE e.group_id STARTS WITH 'novel_'
+                WITH e.group_id as group_id, COUNT(e) as entity_count
+                OPTIONAL MATCH (n:Novel {collection_name: group_id})
+                WITH group_id, entity_count, n
+                WHERE n IS NULL
+                RETURN group_id, entity_count
                 ORDER BY group_id
                 """
                 result = await session.run(old_novels_query)
@@ -234,29 +260,44 @@ async def get_novels_list(request: Request):
                     
                     # 从 status_store 获取额外的元数据（如果有）
                     task_info = status_store.get(collection_name, {})
+                    old_status = task_info.get("status", "completed")
                     
                     novels.append(NovelInfo(
                         collection_name=collection_name,
                         title=task_info.get("title", collection_name),  # 使用 collection_name 作为标题
-                        status=task_info.get("status", "completed"),
+                        status=old_status,
                         created_at=task_info.get("created_at", ""),
-                        chunks_count=entity_count
+                        chunks_count=resolve_chunks_count(old_status, task_info, entity_count)
                     ))
         except Exception as e:
             print(f"[ERROR] Failed to get novels from Neo4j: {e}")
     
-    # 如果 Neo4j 查询失败或没有数据，回退到使用 status_store
-    if not novels:
-        for collection_name, task_info in status_store.items():
-            chunks_count = task_info.get("chunks_processed", 0)
-            
-            novels.append(NovelInfo(
-                collection_name=collection_name,
-                title=task_info.get("title", collection_name),
-                status=task_info.get("status", "unknown"),
-                created_at=task_info.get("created_at", ""),
-                chunks_count=chunks_count
-            ))
+    # 无论 Neo4j 查询结果如何，都补齐仅存在于内存任务中的新上传小说
+    # 这样前端上传后无需刷新即可看到新小说
+    existing_collections = {n.collection_name for n in novels}
+    for collection_name, task_info in status_store.items():
+        if collection_name in existing_collections:
+            continue
+        status_value = task_info.get("status", "unknown")
+        chunks_count = resolve_chunks_count(status_value, task_info, 0)
+
+        novels.append(NovelInfo(
+            collection_name=collection_name,
+            title=task_info.get("title", collection_name),
+            status=status_value,
+            created_at=task_info.get("created_at", ""),
+            chunks_count=chunks_count
+        ))
+
+    # 兜底去重：即使查询层出现重复，也保证返回列表按 collection_name 唯一
+    deduped_novels = {}
+    for novel in novels:
+        if novel.collection_name in deduped_novels:
+            print(f"[WARNING] Duplicate novel record detected for collection={novel.collection_name}, merging records")
+            deduped_novels[novel.collection_name] = merge_duplicate(deduped_novels[novel.collection_name], novel)
+        else:
+            deduped_novels[novel.collection_name] = novel
+    novels = list(deduped_novels.values())
     
     # 按创建时间倒序排列
     novels.sort(key=lambda x: x.created_at, reverse=True)

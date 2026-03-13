@@ -7,6 +7,7 @@ import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCi
 const SESSION_KEY = "traveller_session_id";
 const TERMINAL_NOVEL_STATUSES = new Set<NovelStatus>(['ready', 'failed']);
 const IN_PROGRESS_NOVEL_STATUSES = new Set<NovelStatus>(['queued', 'processing', 'completed', 'extracting']);
+const CHUNK_PROGRESS_STATUSES = new Set<NovelStatus>(['processing']);
 const NOVEL_STATUS_META: Partial<Record<NovelStatus, { color: string; label: string }>> = {
     ready: { color: 'text-emerald-400', label: '✓ 就绪' },
     completed: { color: 'text-sky-400', label: '📝 分块完成' },
@@ -14,6 +15,13 @@ const NOVEL_STATUS_META: Partial<Record<NovelStatus, { color: string; label: str
     processing: { color: 'text-amber-400', label: '⏳ 处理中' },
     queued: { color: 'text-slate-400', label: '⏸️ 排队中' },
     failed: { color: 'text-red-400', label: '✗ 失败' },
+};
+
+const getNovelCountLabel = (status: NovelStatus, count: number): string => {
+    if (CHUNK_PROGRESS_STATUSES.has(status)) {
+        return `${count} 个片段`;
+    }
+    return `${count} 个实体`;
 };
 
 const getSessionId = () => {
@@ -653,7 +661,7 @@ const scrollToSection = (sectionId: string) => {
                                                 <span className={NOVEL_STATUS_META[novel.status]?.color || 'text-red-400'}>
                                                     {NOVEL_STATUS_META[novel.status]?.label || '✗ 失败'}
                                                 </span>
-                                                <span>• {novel.chunks_count} 个片段</span>
+                                                <span>• {getNovelCountLabel(novel.status, novel.chunks_count)}</span>
                                             </div>
                                         </div>
                                         <button
