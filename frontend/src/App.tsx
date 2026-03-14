@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -167,6 +167,7 @@ const App: React.FC = () => {
     // Search & Selection State
     const [searchInput, setSearchInput] = useState("");
     const [isSearching, setIsSearching] = useState(false);
+    const [isFactsLoading, setIsFactsLoading] = useState(false);
     const [searchResults, setSearchResults] = useState<{ nodes: any[], facts: string[] } | null>(null);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [nodeDetail, setNodeDetail] = useState<any | null>(null);
@@ -200,6 +201,8 @@ const App: React.FC = () => {
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const searchPanelRef = useRef<HTMLDivElement>(null);
     const pendingFocusNodeIdRef = useRef<string | null>(null);
+    const factsAbortControllerRef = useRef<AbortController | null>(null);
+    const searchTokenRef = useRef<number>(0);
 
     // Auto scroll to bottom
     useEffect(() => {
@@ -313,6 +316,14 @@ const App: React.FC = () => {
             }
         }
     }, [activeTab]);
+
+    useEffect(() => {
+        if (factsAbortControllerRef.current) {
+            factsAbortControllerRef.current.abort();
+            factsAbortControllerRef.current = null;
+        }
+        setIsFactsLoading(false);
+    }, [currentCollection, activeTab]);
 
     const clearGraph = () => {
         // 清理旧的 G6 图谱实例
@@ -556,6 +567,14 @@ const scrollToSection = (sectionId: string) => {
         fileInputRef.current?.click();
     };
 
+    const cancelFactsRequest = () => {
+        if (factsAbortControllerRef.current) {
+            factsAbortControllerRef.current.abort();
+            factsAbortControllerRef.current = null;
+        }
+        setIsFactsLoading(false);
+    };
+
     const scrollToSearchPanel = () => {
         if (!searchPanelRef.current) return;
         searchPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -701,15 +720,42 @@ const scrollToSection = (sectionId: string) => {
         e.preventDefault();
         if (!searchInput.trim() || !currentCollection) return;
 
+        cancelFactsRequest();
         setIsSearching(true);
+        setIsFactsLoading(false);
+        const queryText = searchInput.trim();
+        const token = searchTokenRef.current + 1;
+        searchTokenRef.current = token;
         try {
-            const results = await searchGraph(currentCollection, searchInput);
-            setSearchResults(results);
+            const results = await searchGraph(currentCollection, queryText);
+            setSearchResults({ ...results, facts: [] });
             setNodeDetail(null); // 清除之前的节点详情，确保搜索结果列表能正常显示
             setSelectedNodeId(null); // 清除选中的节点
             setEdgeDetail(null);
             setSelectedEdgeId(null);
             setActiveTab('graph'); // 自动跳转到图谱页查看
+
+            setIsFactsLoading(true);
+            const controller = new AbortController();
+            factsAbortControllerRef.current = controller;
+            fetchGraphFacts(currentCollection, queryText, controller.signal)
+                .then((factsResult) => {
+                    if (searchTokenRef.current !== token) return;
+                    setSearchResults((prev) => {
+                        if (!prev) return prev;
+                        return { ...prev, facts: factsResult.facts || [] };
+                    });
+                })
+                .catch((error) => {
+                    if (error?.name === 'CanceledError' || error?.name === 'AbortError') {
+                        return;
+                    }
+                })
+                .finally(() => {
+                    if (searchTokenRef.current === token) {
+                        setIsFactsLoading(false);
+                    }
+                });
         } catch (e) {
             console.error("搜索失败", e);
         } finally {
@@ -1043,6 +1089,16 @@ const scrollToSection = (sectionId: string) => {
                                         </div>
                                     </div>
                                 )}
+                                {isFactsLoading && (
+                                    <div>
+                                        <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+                                            <MessageSquare className="w-3 h-3" /> 相关叙事事实
+                                        </div>
+                                        <div className="p-3 text-[11px] text-slate-400 bg-black/20 rounded-xl border border-white/5 italic leading-snug">
+                                            facts 检索中...
+                                        </div>
+                                    </div>
+                                )}
                                 {searchResults.facts.length > 0 && (
                                     <div>
                                         <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-3 flex items-center gap-2">
@@ -1057,7 +1113,7 @@ const scrollToSection = (sectionId: string) => {
                                         </div>
                                     </div>
                                 )}
-                                {searchResults.nodes.length === 0 && searchResults.facts.length === 0 && (
+                                {searchResults.nodes.length === 0 && searchResults.facts.length === 0 && !isFactsLoading && (
                                     <div className="text-center py-8 opacity-40">
                                         <div className="text-xs">未探测到相关信息位</div>
                                     </div>

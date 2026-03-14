@@ -1,4 +1,5 @@
 import json
+import asyncio
 import os
 import time
 import unicodedata
@@ -26,6 +27,11 @@ class GraphResponse(BaseModel):
 class SearchResult(BaseModel):
     query: str
     nodes: List[Dict[str, Any]]
+    facts: List[str] = []
+
+
+class FactsResult(BaseModel):
+    query: str
     facts: List[str] = []
 
 class NodeDetail(BaseModel):
@@ -356,29 +362,45 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                 )
             results["nodes"] = deduped_nodes
         
-        # 2. 语义搜索 (通过 Zep 检索 Facts)
-        client = request.app.state.zep
-        if client and query:
-            try:
-                # 获取 session 的 memory，包含相关 facts
-                memory = await client.memory.get(session_id)
-                # 简单的文本匹配过滤相关 facts
-                all_facts = memory.relevant_facts or []
-                query_lower = query.lower()
-                matching_facts = [
-                    f.fact for f in all_facts
-                    if query_lower in f.fact.lower()
-                ]
-                results["facts"] = matching_facts[:5]  # 限制返回 5 个
-            except Exception as zep_error:
-                # Zep 搜索失败不影响 Neo4j 搜索结果
-                print(f"[WARNING] Zep search failed: {zep_error}")
-
     except Exception as e:
         print(f"[ERROR] Search Error: {e}")
         import traceback
         traceback.print_exc()
     
+    return results
+
+
+@router.get("/{collection_name}/facts", response_model=FactsResult)
+async def search_graph_facts(collection_name: str, query: str, request: Request):
+    """
+    仅返回 facts（可被前端异步/可取消调用）
+    """
+    if collection_name.startswith("novel_"):
+        session_id = collection_name
+    else:
+        session_id = f"novel_{collection_name}"
+
+    results = {"query": query, "facts": []}
+    if not query or not query.strip():
+        return results
+
+    client = request.app.state.zep
+    if not client:
+        return results
+
+    try:
+        # 允许更长时间等待 facts 返回，前端会显示“检索中”
+        memory = await asyncio.wait_for(client.memory.get(session_id), timeout=20.0)
+        all_facts = memory.relevant_facts or []
+        query_lower = query.lower()
+        matching_facts = [
+            f.fact for f in all_facts
+            if query_lower in f.fact.lower()
+        ]
+        results["facts"] = matching_facts[:5]
+    except Exception as zep_error:
+        print(f"[WARNING] Zep facts search failed: {zep_error}")
+
     return results
 
 @router.get("/node/{uuid}", response_model=NodeDetail)

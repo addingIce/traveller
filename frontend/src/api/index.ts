@@ -35,6 +35,11 @@ export const searchGraph = async (collectionName: string, query: string) => {
     return data;
 };
 
+export const fetchGraphFacts = async (collectionName: string, query: string, signal?: AbortSignal) => {
+    const { data } = await apiClient.get(`/graph/${collectionName}/facts`, { params: { query }, signal });
+    return data;
+};
+
 export const fetchNodeDetail = async (uuid: string) => {
     const { data } = await apiClient.get(`/graph/node/${uuid}`);
     return data;
