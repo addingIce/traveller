@@ -383,10 +383,38 @@ async def delete_novel(collection_name: str, request: Request):
     
     deleted_entities = 0
     deleted_relationships = 0
+    deleted_sessions = 0
     errors = []
     
     try:
-        # 1. 删除 Neo4j 中的实体和关系
+        # 1. 先获取所有关联的 Session ID（用于删除 Zep 数据）
+        session_ids = []
+        if driver:
+            try:
+                async with driver.session() as driver_session:
+                    # 获取所有关联的 session_id
+                    get_sessions_query = """
+                    MATCH (n:Novel {collection_name: $collection_name})-[:HAS_SESSION]->(s:Session)
+                    RETURN s.uuid as session_id
+                    """
+                    result = await driver_session.run(get_sessions_query, collection_name=collection_name)
+                    async for record in result:
+                        session_ids.append(record["session_id"])
+                    print(f"[INFO] 找到 {len(session_ids)} 个关联的 Session")
+            except Exception as e:
+                print(f"[WARNING] 获取 Session 列表失败: {e}")
+
+        # 2. 删除 Zep 中的所有 session 数据（包括原始小说和分支）
+        if client and session_ids:
+            for sid in session_ids:
+                try:
+                    await client.memory.delete_memory(sid)
+                    print(f"[INFO] Zep session {sid} 已删除")
+                except Exception as e:
+                    print(f"[WARNING] 删除 Zep session {sid} 失败: {e}")
+            deleted_sessions = len(session_ids)
+        
+        # 3. 删除 Neo4j 中的实体和关系
         if driver:
             try:
                 async with driver.session() as driver_session:
@@ -448,34 +476,10 @@ async def delete_novel(collection_name: str, request: Request):
                 errors.append(error_msg)
                 print(f"[ERROR] {error_msg}")
         
-        # 2. 尝试删除 Zep session（如果 API 支持）
-        try:
-            # Zep Python SDK 可能没有直接的删除方法
-            # 这里尝试使用 HTTP API 删除 session
-            import httpx
-            zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
-            zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
-            async with httpx.AsyncClient() as http_client:
-                # 尝试删除 session
-                response = await http_client.delete(
-                    f"{zep_api_url}/api/v1/session/{collection_name}",
-                    headers={"Authorization": f"Bearer {zep_api_key}"}
-                )
-                if response.status_code == 200 or response.status_code == 204:
-                    print(f"[INFO] Zep session {collection_name} 已删除")
-                elif response.status_code == 404:
-                    print(f"[INFO] Zep session {collection_name} 不存在")
-                else:
-                    print(f"[WARNING] Zep session 删除失败: {response.status_code}")
-        except Exception as e:
-            error_msg = f"Zep session 删除失败: {str(e)}"
-            errors.append(error_msg)
-            print(f"[WARNING] {error_msg}")
-        
-        # 3. 从状态存储中移除
+        # 4. 从状态存储中移除
         if collection_name in status_store:
             del status_store[collection_name]
-        # 4. 清理图谱缓存
+        # 5. 清理图谱缓存
         try:
             if graph_cache and isinstance(graph_cache, dict):
                 items = graph_cache.get("items", {})
@@ -486,6 +490,8 @@ async def delete_novel(collection_name: str, request: Request):
         
         # 构建响应消息
         message_parts = []
+        if deleted_sessions > 0:
+            message_parts.append(f"删除了 {deleted_sessions} 个平行宇宙")
         if deleted_entities > 0:
             message_parts.append(f"删除了 {deleted_entities} 个实体")
         if deleted_relationships > 0:
