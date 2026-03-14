@@ -1242,7 +1242,52 @@ const scrollToSection = (sectionId: string) => {
                             onChange={handleFileChange}
                             className="hidden"
                         />
-                        <div className="space-y-2 max-h-[300px] overflow-y-auto custom-scrollbar">
+                        {/* 选中项 - 始终显示 */}
+                        {currentCollection && novels.find(n => n.collection_name === currentCollection) && (() => {
+                            const selectedNovel = novels.find(n => n.collection_name === currentCollection)!;
+                            return (
+                            <div
+                                className={`p-3 rounded-xl cursor-pointer transition-all border ${
+                                    isNovelListExpanded ? 'bg-sky-500/10 border-sky-500/50' : 'bg-sky-500/10 border-sky-500/50'
+                                }`}
+                                onClick={() => !isNovelListExpanded && setIsNovelListExpanded(true)}
+                            >
+                                <div className="flex justify-between items-start">
+                                    <div className="flex-1 min-w-0" onClick={() => isNovelListExpanded && handleSelectNovel(selectedNovel.collection_name)}>
+                                        <div className="font-medium truncate">{selectedNovel.title}</div>
+                                        <div className="text-xs text-slate-500 mt-1 flex items-center gap-2">
+                                            <span className={NOVEL_STATUS_META[selectedNovel.status]?.color || 'text-red-400'}>
+                                                {NOVEL_STATUS_META[selectedNovel.status]?.label || '✗ 失败'}
+                                            </span>
+                                            <span>• {getNovelCountLabel(selectedNovel.status, selectedNovel.chunks_count)}</span>
+                                        </div>
+                                    </div>
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteNovel(selectedNovel.collection_name);
+                                        }}
+                                        className="p-1 rounded hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-all"
+                                        title="删除"
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                </div>
+                                {IN_PROGRESS_NOVEL_STATUSES.has(selectedNovel.status) && (
+                                    <div className="mt-2 w-full bg-black/30 rounded-full h-1">
+                                        <div className="bg-sky-500 h-1 rounded-full animate-pulse" style={{ width: '50%' }} />
+                                    </div>
+                                )}
+                            </div>
+                            );
+                        })()}
+                        {/* 其他项列表 - 可折叠 */}
+                        <div 
+                            className="grid transition-all duration-500 ease-in-out"
+                            style={{ gridTemplateRows: isNovelListExpanded ? '1fr' : '0fr' }}
+                        >
+                            <div className="overflow-hidden">
+                                <div className="space-y-2 pt-2">
                             {novels.length === 0 && (
                                 <div className="text-center py-8 text-slate-500 text-sm">
                                     <Upload className="w-8 h-8 mx-auto mb-2 opacity-50" />
@@ -1250,7 +1295,7 @@ const scrollToSection = (sectionId: string) => {
                                 </div>
                             )}
                             {novels
-                                .filter(novel => isNovelListExpanded || currentCollection === novel.collection_name)
+                                .filter(novel => novel.collection_name !== currentCollection)
                                 .map((novel) => (
                                 <div
                                     key={novel.collection_name}
@@ -1288,6 +1333,8 @@ const scrollToSection = (sectionId: string) => {
                                     )}
                                 </div>
                             ))}
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -1340,11 +1387,11 @@ const scrollToSection = (sectionId: string) => {
 
                     {/* Search Panel with smooth height transition */}
                     <div 
-                        className={`transition-all duration-300 ease-in-out ${
+                        className={`transition-all duration-500 ease-in-out ${
                             activeTab === 'graph' ? 'opacity-100 mt-6' : 'opacity-0 !mt-0 pointer-events-none'
                         }`}
                     >
-                        <div className="grid transition-all duration-300 ease-in-out overflow-hidden" style={{ gridTemplateRows: activeTab === 'graph' ? '1fr' : '0fr' }}>
+                        <div className="grid transition-all duration-500 ease-in-out overflow-hidden" style={{ gridTemplateRows: activeTab === 'graph' ? '1fr' : '0fr' }}>
                             <div className="overflow-hidden">
                                 <div 
                                     ref={searchPanelRef} 
@@ -1495,23 +1542,58 @@ const scrollToSection = (sectionId: string) => {
                                 <Plus className="w-4 h-4" />
                             </button>
                         </div>
-                        <div className="space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
+                        {/* 选中项 - 始终显示 */}
+                        {currentSessionId && sessions.find(s => s.session_id === currentSessionId) && (() => {
+                            const selectedSession = sessions.find(s => s.session_id === currentSessionId)!;
+                            return (
+                            <div
+                                className={`p-3 rounded-xl cursor-pointer transition-all border group relative ${
+                                    isSessionsExpanded ? 'bg-amber-500/10 border-amber-500/50' : 'bg-amber-500/10 border-amber-500/50'
+                                }`}
+                                onClick={() => !isSessionsExpanded && setIsSessionsExpanded(true)}
+                            >
+                                {!selectedSession.is_root && (
+                                    <button
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleDeleteSession(selectedSession.session_id, selectedSession.session_name, selectedSession.is_root);
+                                        }}
+                                        className="absolute right-2 top-2 w-5 h-5 rounded bg-red-500/0 hover:bg-red-500/20 text-red-400/0 group-hover:text-red-400 hover:text-red-400 transition-all flex items-center justify-center"
+                                        title="删除此平行宇宙"
+                                    >
+                                        <Trash2 className="w-3 h-3" />
+                                    </button>
+                                )}
+                                <div className="font-medium truncate text-sm flex items-center gap-2 h-5" onClick={() => isSessionsExpanded && handleSwitchSession(selectedSession.session_id)}>
+                                    {selectedSession.is_root && <BookOpen className="w-3 h-3 text-sky-400 shrink-0" />}
+                                    <span className="truncate leading-none">{selectedSession.session_name}</span>
+                                </div>
+                                <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
+                                    <span>{selectedSession.is_root ? '原始剧情线' : '玩家分支'}</span>
+                                    <span>{selectedSession.last_interaction_at ? new Date(selectedSession.last_interaction_at).toLocaleDateString() : '尚未开始'}</span>
+                                </div>
+                            </div>
+                            );
+                        })()}
+                        {/* 其他项列表 - 可折叠 */}
+                        <div 
+                            className="grid transition-all duration-500 ease-in-out"
+                            style={{ gridTemplateRows: isSessionsExpanded ? '1fr' : '0fr' }}
+                        >
+                            <div className="overflow-hidden">
+                                <div className="space-y-2 pt-2">
                             {isSessionsLoading ? (
                                 <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
                             ) : sessions.length === 0 ? (
                                 <div className="text-center py-4 text-slate-500 text-xs">暂无平行宇宙</div>
                             ) : (
                                 sessions
-                                    .filter(sess => isSessionsExpanded || currentSessionId === sess.session_id)
+                                    .filter(sess => sess.session_id !== currentSessionId)
                                     .map((sess) => (
                                     <div
                                         key={sess.session_id}
                                         onClick={() => handleSwitchSession(sess.session_id)}
-                                        className={`p-3 rounded-xl cursor-pointer transition-all border group relative ${
-                                            currentSessionId === sess.session_id
-                                                ? 'bg-amber-500/10 border-amber-500/50'
-                                                : 'bg-white/5 border-white/5 hover:border-white/10'
-                                        }`}
+                                        className="p-3 rounded-xl cursor-pointer transition-all border group relative bg-white/5 border-white/5 hover:border-white/10"
                                     >
                                         {!sess.is_root && (
                                             <button
@@ -1536,6 +1618,8 @@ const scrollToSection = (sectionId: string) => {
                                     </div>
                                 ))
                             )}
+                                </div>
+                            </div>
                         </div>
                     </div>
                     
