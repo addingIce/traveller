@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage, getSessionWaypoints, WaypointStatus } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -209,6 +209,8 @@ const App: React.FC = () => {
     const [bookmarkName, setBookmarkName] = useState('');
     const [bookmarks, setBookmarks] = useState<any[]>([]);
     const [isBookmarksLoading, setIsBookmarksLoading] = useState(false);
+    const [waypoints, setWaypoints] = useState<WaypointStatus[]>([]);
+    const [isWaypointsLoading, setIsWaypointsLoading] = useState(false);
 
     // System Config State
     const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -379,17 +381,40 @@ const App: React.FC = () => {
         }
     }, [currentCollection]);
 
-    // Load entries (graph, bookmarks, messages) whenever currentSessionId changes
+    // Unified data loader for currentSessionId changes
     useEffect(() => {
         if (currentSessionId) {
+            console.log("[DEBUG] currentSessionId changed, loading all data for:", currentSessionId);
             loadBookmarks(currentSessionId);
-            loadGraph(true, currentSessionId);
             loadMessages(currentSessionId);
+            loadWaypoints(currentSessionId);
+            
+            // If we are already on graph tab, reload it too
+            if (currentCollection && activeTab === 'graph') {
+                loadGraph(true, currentSessionId);
+            } else {
+                setGraphData(null); // Clear old data to force reload when switching back to graph
+            }
         } else {
             setHistory([]);
             setBookmarks([]);
+            setWaypoints([]);
+            setGraphData(null);
         }
-    }, [currentSessionId]);
+    }, [currentSessionId, activeTab, currentCollection]);
+
+    const loadWaypoints = async (sid: string, silent = false) => {
+        if (!sid) return;
+        if (!silent) setIsWaypointsLoading(true);
+        try {
+            const data = await getSessionWaypoints(sid);
+            setWaypoints(data);
+        } catch (e) {
+            console.error("Failed to load waypoints", e);
+        } finally {
+            if (!silent) setIsWaypointsLoading(false);
+        }
+    };
 
     const loadMessages = async (sid: string) => {
         if (!sid) return;
@@ -416,13 +441,6 @@ const App: React.FC = () => {
         }
     };
 
-    // Clear graph data when currentSessionId changes (force reload on next graph tab switch)
-    useEffect(() => {
-        setGraphData(null);
-        if (currentCollection && activeTab === 'graph' && currentSessionId) {
-            loadGraph(true, currentSessionId);
-        }
-    }, [currentSessionId, activeTab]);
 
     // Handle Tab Switch & Graph Load
     useEffect(() => {
@@ -1123,6 +1141,21 @@ const scrollToSection = (sectionId: string) => {
             if (aiResponse.world_impact.world_state_changed) {
                 loadGraph();
             }
+
+            // Milestone: reached waypoints (M3)
+            if (aiResponse.reached_waypoints && aiResponse.reached_waypoints.length > 0) {
+                console.log("[DEBUG] Waypoints reached:", aiResponse.reached_waypoints);
+                const titles = aiResponse.reached_waypoints.join('、');
+                showAlert('剧情里程碑', `恭喜！您已成功触发剧情路标：「${titles}」。进度已实时同步。`, 'success');
+            }
+            
+            // Always check for waypoints update if AI returned the field (even if empty, to be safe)
+            if (aiResponse.reached_waypoints) {
+                setTimeout(() => {
+                    console.log("[DEBUG] Auto-refreshing waypoints for:", sessToUse);
+                    loadWaypoints(sessToUse, true);
+                }, 1000); // 1s delay to ensure Neo4j write is committed and indexed
+            }
         } catch (e) {
             console.error("互动失败", e);
             showAlert('推演失败', '剧情推演遇到时空扰动。请检查 Zep 与 FastAPI 服务是否正常运行。', 'error');
@@ -1475,6 +1508,56 @@ const scrollToSection = (sectionId: string) => {
                         </div>
                     </div>
                     
+                    {/* Waypoints / Story Milestones */}
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-[200px] mt-4">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="text-emerald-400 font-semibold flex items-center gap-2 text-sm">
+                                <Target className="w-4 h-4 shrink-0" />
+                                <span>剧情路标</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 uppercase font-mono">Convergence</span>
+                        </div>
+                        <div className="space-y-3 overflow-y-auto custom-scrollbar max-h-[300px]">
+                            {isWaypointsLoading ? (
+                                <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
+                            ) : waypoints.length === 0 ? (
+                                <div className="text-center py-4 text-slate-500 text-[10px] italic">未探测到路标数据</div>
+                            ) : (
+                                waypoints.map((wp, index) => (
+                                    <div 
+                                        key={index}
+                                        className={`group relative p-3 rounded-xl border transition-all ${
+                                            wp.reached 
+                                                ? 'bg-emerald-500/10 border-emerald-500/20' 
+                                                : 'bg-white/5 border-white/5'
+                                        }`}
+                                    >
+                                        <div className="flex items-start gap-3">
+                                            <div className={`mt-0.5 rounded-full p-1 ${
+                                                wp.reached ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-700 text-slate-500'
+                                            }`}>
+                                                {wp.reached ? <CheckCircle className="w-3 h-3" /> : <AlertCircle className="w-3 h-3" />}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className={`text-xs font-semibold truncate ${wp.reached ? 'text-emerald-400' : 'text-slate-300'}`}>
+                                                    {wp.title}
+                                                </div>
+                                                <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">
+                                                    {wp.description}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {wp.reached && wp.reached_at && (
+                                            <div className="absolute right-2 bottom-1 text-[8px] text-emerald-500/40 font-mono">
+                                                {new Date(wp.reached_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
+                                            </div>
+                                        )}
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
                     {/* Bookmark List (Story Snapshots) */}
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-[300px] mt-4">
                         <div className="flex justify-between items-center mb-4">

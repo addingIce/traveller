@@ -513,6 +513,33 @@ class SessionService:
             print(f"[ERROR] Failed to get messages for session {session_id}: {e}")
             return []
 
+    async def get_session_waypoints(self, session_id: str) -> List[Dict[str, Any]]:
+        """获取 Session 的路标达成状态 (M3)"""
+        print(f"[DEBUG] get_session_waypoints: session_id={session_id}")
+        try:
+            async with self.neo4j.session() as session:
+                query = """
+                MATCH (s:Session {uuid: $sid})
+                MATCH (n:Novel)-[:HAS_SESSION]->(s)
+                MATCH (w:Waypoint {group_id: n.collection_name})
+                OPTIONAL MATCH (s)-[r:TRIGGERED]->(w)
+                RETURN w.title as title, 
+                       w.description as description,
+                       w.requirement as requirement,
+                       w.order as order,
+                       w.category as category,
+                       r IS NOT NULL as reached,
+                       r.at as reached_at
+                ORDER BY w.order ASC
+                """
+                result = await session.run(query, sid=session_id)
+                waypoints = [dict(record) async for record in result]
+                print(f"[DEBUG] get_session_waypoints: found {len(waypoints)} waypoints for {session_id}")
+                return waypoints
+        except Exception as e:
+            print(f"[ERROR] Failed to get waypoints for session {session_id}: {e}")
+            return []
+
     async def _cleanup_orphan_entities(self) -> int:
         """
         清理孤儿 Entity 数据（group_id 没有对应 Session 的 Entity）

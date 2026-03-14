@@ -30,6 +30,7 @@ export interface ChatResponse {
     user_intent_summary: IntentSummary;
     world_impact: WorldImpact;
     ui_hints: string[];
+    reached_waypoints?: string[];
     mode?: DirectorMode;
 }
 
@@ -59,6 +60,16 @@ export interface ChapterInfo {
     title: string;
     content_preview: string;
     order: number;
+}
+
+export interface WaypointStatus {
+    title: string;
+    description: string;
+    requirement?: string;
+    order?: number;
+    category?: string;
+    reached: boolean;
+    reached_at?: string;
 }
 
 export const fetchKnowledgeGraph = async (collectionName: string, sessionId?: string) => {
@@ -282,4 +293,9 @@ export interface SessionMessage {
 export const getSessionMessages = async (sessionId: string): Promise<SessionMessage[]> => {
     const { data } = await apiClient.get(`/sessions/${sessionId}/messages`);
     return data.messages || [];
+};
+
+export const getSessionWaypoints = async (sessionId: string): Promise<WaypointStatus[]> => {
+    const { data } = await apiClient.get(`/sessions/${sessionId}/waypoints`);
+    return data || [];
 };

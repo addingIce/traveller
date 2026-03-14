@@ -60,15 +60,31 @@ async def chat_interact(req: ChatRequest, request: Request):
         ai_msg = Message(role="assistant", role_type="assistant", content=ai_data["story_text"])
         await zep.memory.add(req.session_id, messages=[user_msg, ai_msg])
 
-        # 7. 更新 Neo4j 会话时间
+        # 7. 更新 Neo4j：会话时间 + 路标达成记录 (M3)
         try:
             async with neo4j.session() as session:
+                # 更新交互时间
                 await session.run(
                     "MATCH (s:Session {uuid: $sid}) SET s.last_interaction_at = $now",
                     sid=req.session_id, now=datetime.utcnow().isoformat()
                 )
+                
+                # 持久化已达成的路标
+                reached = ai_data.get("reached_waypoints", [])
+                if isinstance(reached, list) and len(reached) > 0:
+                    print(f"[PROGRESS] Session {req.session_id} reached waypoints: {reached}")
+                    await session.run(
+                        """
+                        MATCH (s:Session {uuid: $sid})
+                        MATCH (w:Waypoint {group_id: $gid})
+                        WHERE w.title IN $reached
+                        MERGE (s)-[:TRIGGERED {at: $now}]->(w)
+                        """,
+                        sid=req.session_id, gid=req.novel_id, 
+                        reached=reached, now=datetime.utcnow().isoformat()
+                    )
         except Exception as ne:
-            print(f"[ERROR] Session timestamp update failed: {ne}")
+            print(f"[ERROR] Session state persistence failed: {ne}")
 
         # 8. 图谱缓存脏标记
         if ai_data.get("world_impact", {}).get("world_state_changed"):

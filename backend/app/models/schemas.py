@@ -29,6 +29,7 @@ class ChatResponse(BaseModel):
     user_intent_summary: IntentSummary
     world_impact: WorldImpact
     ui_hints: List[str]
+    reached_waypoints: Optional[List[str]] = Field(default_factory=list)
 
 class SessionCreate(BaseModel):
     novel_id: str
@@ -67,3 +68,12 @@ class ChapterInfo(BaseModel):
     title: str
     content_preview: str
     order: int
+
+class WaypointStatus(BaseModel):
+    title: str
+    description: str
+    requirement: Optional[str] = None
+    order: Optional[int] = None
+    category: Optional[str] = None
+    reached: bool = False
+    reached_at: Optional[str] = None

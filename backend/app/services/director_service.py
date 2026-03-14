@@ -124,9 +124,9 @@ class ContextAssembler:
                  context["world_background"] = novel_memory.messages[0].content[:500] + "..."
         except Exception as e:
             print(f"[DEBUG] ContextAssembler: Novel background fetch failed: {e}")
-
         try:
             async with self.neo4j.session() as session:
+                # 3. 获取相关实体
                 query = """
                 MATCH (e:Entity {group_id: $novel_id})
                 RETURN e.name as name, e.summary as summary
@@ -136,15 +136,36 @@ class ContextAssembler:
                 entities = [f"{r['name']}: {r['summary']}" async for r in result]
                 context["relevant_entities"] = entities
 
-                # 4. 获取剧情路标 (Waypoints) - 只有收束模式下特别重要，但沙盒模式也可知晓
+                # 4. 获取剧情路标 (Waypoints) - 深度优化方案
+                # 逻辑：找出尚未触发的，且前置依赖已满足的路标
                 waypoint_query = """
                 MATCH (w:Waypoint {group_id: $novel_id})
+                // 排除会话中已触发的路标
+                WHERE NOT EXISTS {
+                    MATCH (s:Session {uuid: $session_id})-[:TRIGGERED]->(w)
+                }
+                // 检查前置依赖：如果没有前置需求，或者前置需求已在该会话触发
+                AND (
+                    w.requirement IS NULL OR w.requirement = "" OR
+                    EXISTS {
+                        MATCH (s:Session {uuid: $session_id})-[:TRIGGERED]->(prev:Waypoint {title: w.requirement})
+                    }
+                )
                 RETURN w.title as title, w.requirement as requirement, w.description as description
                 LIMIT 5
                 """
-                wp_result = await session.run(waypoint_query, novel_id=novel_id)
-                waypoints = [f"路标: {r['title']} (前置: {r['requirement']}) - {r['description']}" async for r in wp_result]
+                wp_result = await session.run(waypoint_query, novel_id=novel_id, session_id=session_id)
+                waypoints = [f"路标: {r['title']} (前置: {r['requirement'] or '无'}) - {r['description']}" async for r in wp_result]
                 context["waypoints"] = waypoints
+                
+                # 5. 同时获取已触发路标列表（用于 AI 查阅历史）
+                triggered_query = """
+                MATCH (s:Session {uuid: $session_id})-[:TRIGGERED]->(w:Waypoint)
+                RETURN w.title as title
+                """
+                tr_result = await session.run(triggered_query, session_id=session_id)
+                context["reached_waypoints"] = [r['title'] async for r in tr_result]
+
         except Exception as e:
             print(f"[DEBUG] ContextAssembler: Context fetch failed: {e}")
 
@@ -189,10 +210,16 @@ class DirectorAI:
         """导演推演逻辑"""
         
         mode_instruction = ""
+        waypoint_label = "接下来待引导的路标 (Waypoints)"
+        convergence_hint = ""
+        
         if mode == "SANDBOX":
-            mode_instruction = "沙盒模式：极高自由度，NPC 反应要根据其性格和世界逻辑自然演化，不强行引导剧情。"
+            mode_instruction = "沙盒模式：极高自由度。你是一个观察者和世界反应器。NPC 应基于其性格自发行动，绝不主动强行把玩家往主线剧情上拉。路标仅作为判定剧情达成的参考。"
+            waypoint_label = "潜在的剧情后续 (Waypoints - 仅参考)"
+            convergence_hint = "保持自由开放，优先响应玩家的奇思妙想。"
         else:
-            mode_instruction = "收束模式：在符合逻辑的前提下，尽可能引导玩家接触主线剧情或设定的关键路标。"
+            mode_instruction = "收束模式：你是剧情的设计师。在保持逻辑合理的前提下，利用 NPC 行动、环境巨变或突发事件产生叙事压力，引导玩家向指定的路标靠拢。"
+            convergence_hint = "增加环境压力和NPC的主动干预，纠正偏离主线的行为。"
 
         system_prompt = f"""
         # Role: 穿越者引擎导演 (Director AI)
@@ -201,15 +228,21 @@ class DirectorAI:
         
         ## Context:
         - 世界背景: {context['world_background']}
-        - 起始点: {context.get('start_chapter_id', '开篇')}
+        - 已达成路标 (Waypoints): {", ".join(context.get('reached_waypoints', [])) or "尚无"}
         - 关键实体: {"; ".join(context['relevant_entities'])}
-        - 剧情路标 (Waypoints): {"; ".join(context['waypoints'])}
+        - {waypoint_label}: {"; ".join(context['waypoints'])}
         - 历史摘要: {context['session_summary']}
         
+        ## Waypoint Trigger Rules (判定准则):
+        1. **增量判定**：只有当玩家当前的动作或你生成的剧情剧情中，**新发生**了符合路标描述的事件时，才判定为“达成”。
+        2. **严格匹配**：请仔细阅读路标的 (前置/描述)。若路标要求“询问某事”，玩家必须执行了询问动作才算达成。
+        3. **宁缺毋滥**：如果不确定剧情是否已经推演到该路标，不要将其加入 `reached_waypoints`。
+        4. **禁止重复**：已在“已达成路标”列表中的点，严禁再次出现在 `reached_waypoints` 中。
+
         ## Joint Output Protocol (JOP) - JSON Schema:
-        请严格按以下 JSON 结构输出，不要包含任何 Markdown 格式以外的解释文字：
+        请严格按以下 JSON 结构输出：
         {{
-            "story_text": "高质量剧情叙述。在收束模式下，应尽可能引导玩家接近路标。",
+            "story_text": "高质量剧情叙事。{convergence_hint}",
             "world_impact": {{ 
                 "world_state_changed": true/false, 
                 "reason": "简述世界逻辑或NPC态度的变化" 
@@ -219,7 +252,8 @@ class DirectorAI:
                 "dialogue": "解析出的玩家发言内容",
                 "thought": "解析出的玩家内心独白"
             }},
-            "ui_hints": ["需前端高亮的关键词", "建议操作指令"]
+            "reached_waypoints": ["仅包含标题（Title），严禁包含前缀或描述。例如正确格式：['时空决战']，错误格式：['路标: 时空决战...']"],
+            "ui_hints": ["关键词"]
         }}
         """
 
@@ -248,7 +282,20 @@ class DirectorAI:
                  raise ValueError("LLM 响应无效或 choices 为空")
                  
             content = response.choices[0].message.content
-            return self._robust_json_parse(content)
+            parsed = self._robust_json_parse(content)
+            
+            # 强化：对 reached_waypoints 进行防御性清洗
+            if "reached_waypoints" in parsed and isinstance(parsed["reached_waypoints"], list):
+                cleaned = []
+                for wp in parsed["reached_waypoints"]:
+                    if isinstance(wp, str):
+                        # 去除常见前缀
+                        name = re.sub(r'^(路标[:：]\s*|Waypoint[:：]\s*)', '', wp).strip()
+                        if name:
+                            cleaned.append(name)
+                parsed["reached_waypoints"] = cleaned
+                
+            return parsed
         except Exception as e:
             print(f"[ERROR] DirectorAI generation failed: {e}")
             return {

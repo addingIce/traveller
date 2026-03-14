@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request, status
 from typing import List
-from app.models.schemas import SessionCreate, SessionInfo, BookmarkCreate, BookmarkInfo, BranchRequest, ChapterInfo
+from app.models.schemas import SessionCreate, SessionInfo, BookmarkCreate, BookmarkInfo, BranchRequest, ChapterInfo, WaypointStatus
 from app.services.session_service import SessionService
 
 router = APIRouter()
@@ -92,5 +92,15 @@ async def delete_bookmark(session_id: str, bookmark_id: str, request: Request):
             raise HTTPException(status_code=404, detail="Bookmark not found")
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{session_id}/waypoints", response_model=List[WaypointStatus])
+async def get_waypoints(session_id: str, request: Request):
+    """获取 Session 的路标达成状态 (M3)"""
+    service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
+    try:
+        waypoints = await service.get_session_waypoints(session_id)
+        return [WaypointStatus(**w) for w in waypoints]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
