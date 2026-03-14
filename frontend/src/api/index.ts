@@ -221,11 +221,12 @@ export const getServicesStatus = async (): Promise<{ success: boolean; status: s
 
 // --- Session & Timeline API ---
 
-export const createSession = async (novelId: string, userId: string, sessionName?: string): Promise<SessionInfo> => {
+export const createSession = async (novelId: string, userId: string, sessionName?: string, startChapterId?: string): Promise<SessionInfo> => {
     const { data } = await apiClient.post('/sessions', {
         novel_id: novelId,
         user_id: userId,
         session_name: sessionName,
+        start_chapter_id: startChapterId,
     });
     return data;
 };

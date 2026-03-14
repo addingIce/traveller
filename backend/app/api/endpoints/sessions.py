@@ -11,7 +11,7 @@ async def create_session(req: SessionCreate, request: Request):
         raise HTTPException(status_code=503, detail="Infrastructure not ready")
     service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
     try:
-        session_data = await service.create_session(req.novel_id, req.user_id, req.session_name)
+        session_data = await service.create_session(req.novel_id, req.user_id, req.session_name, start_chapter_id=req.start_chapter_id)
         return SessionInfo(**session_data)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

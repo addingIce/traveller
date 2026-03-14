@@ -208,6 +208,8 @@ const App: React.FC = () => {
     const [showHelpModal, setShowHelpModal] = useState(false);
     const [showNewSessionModal, setShowNewSessionModal] = useState(false);
     const [newSessionName, setNewSessionName] = useState('');
+    const [startChapterId, setStartChapterId] = useState<string | null>(null);
+    const [startChapterTitle, setStartChapterTitle] = useState<string | null>(null);
     const [activeSection, setActiveSection] = useState<string>('presets');
 
     const graphContainer = useRef<HTMLDivElement>(null);
@@ -635,12 +637,14 @@ const scrollToSection = (sectionId: string) => {
     const handleCreateSession = async () => {
         if (!currentCollection || !newSessionName.trim()) return;
         try {
-            const newSess = await createSession(currentCollection, sessionId, newSessionName.trim());
+            const newSess = await createSession(currentCollection, sessionId, newSessionName.trim(), startChapterId || undefined);
             setSessions(prev => [newSess, ...prev]);
             setCurrentSessionId(newSess.session_id);
             setHistory([]); 
             setShowNewSessionModal(false);
             setNewSessionName('');
+            setStartChapterId(null);
+            setStartChapterTitle(null);
         } catch (e) {
             alert("创建平行宇宙失败");
         }
@@ -1317,7 +1321,12 @@ const scrollToSection = (sectionId: string) => {
                             {isBookmarksLoading ? (
                                 <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
                             ) : bookmarks.length === 0 ? (
-                                <div className="text-center py-4 text-slate-500 text-xs">暂无书签</div>
+                                <div className="text-center py-8 px-4">
+                                    <div className="text-slate-600 text-[10px] leading-relaxed italic">
+                                        该宇宙目前还没有存档位。<br/>
+                                        <span className="text-sky-500/60">提示：点击右侧聊天消息中 AI 回复旁边的“保存”图标来创建第一个剧情书签。</span>
+                                    </div>
+                                </div>
                             ) : (
                                 bookmarks.map((bm) => (
                                     <div
@@ -1481,8 +1490,10 @@ const scrollToSection = (sectionId: string) => {
                                                 <button 
                                                     onClick={(e) => {
                                                         e.stopPropagation();
-                                                        // Future: branch from this specific chapter
-                                                        handleCreateSession(); 
+                                                        setStartChapterId(ch.id);
+                                                        setStartChapterTitle(ch.title);
+                                                        setNewSessionName(`基于: ${ch.title}`);
+                                                        setShowNewSessionModal(true);
                                                     }}
                                                     className="absolute inset-0 bg-sky-500/80 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-all"
                                                 >
@@ -1636,6 +1647,13 @@ const scrollToSection = (sectionId: string) => {
                             <Plus className="w-5 h-5 text-amber-500" />
                             开启新的平行宇宙
                         </h3>
+                        <div className="mb-6 p-3 bg-white/5 border border-white/5 rounded-xl">
+                            <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">起始背景</div>
+                            <div className="text-sm text-slate-300 flex items-center gap-2">
+                                <BookOpen className="w-3.5 h-3.5 text-sky-400" />
+                                {startChapterTitle ? `从章节: ${startChapterTitle}` : "从小说开篇/全局背景开始"}
+                            </div>
+                        </div>
                         <p className="text-slate-400 text-sm mb-6 leading-relaxed">
                             为这个全新的命运分支命名。它将作为一个独立的存档点，承载你与 AI 共同编撰的新故事。
                         </p>

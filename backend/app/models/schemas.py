@@ -32,6 +32,7 @@ class SessionCreate(BaseModel):
     novel_id: str
     user_id: str
     session_name: Optional[str] = "新的冒险"
+    start_chapter_id: Optional[str] = None
 
 class SessionInfo(BaseModel):
     session_id: str

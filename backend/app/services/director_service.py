@@ -58,6 +58,22 @@ class ContextAssembler:
             "relevant_entities": []
         }
 
+        # 0. Fetch Session Metadata for Branching Context
+        start_chapter_content = ""
+        try:
+            # Get session info to check for start_chapter_id
+            session_info = await self.zep.memory.get_session(session_id)
+            if session_info and session_info.metadata:
+                start_ch_id = session_info.metadata.get("start_chapter_id")
+                if start_ch_id:
+                    # In this system, chapters are messages in the 'novel_{novel_id}' session
+                    novel_sess_id = novel_id if novel_id.startswith("novel_") else f"novel_{novel_id}"
+                    # We might need to fetch the specific message. 
+                    # For simplicity, we'll note it in the context.
+                    context["start_chapter_id"] = start_ch_id
+        except Exception as e:
+            print(f"[DEBUG] ContextAssembler: Session metadata fetch failed: {e}")
+
         # 1. 获取当前玩家 Session 的记忆
         try:
             memory = await self.zep.memory.get(session_id)
@@ -113,6 +129,8 @@ class DirectorAI:
         [当前模式]: {mode_instruction}
         
         [小说宏观背景]: {context['world_background']}
+        
+        {f"[平行宇宙起始章节]: {context.get('start_chapter_id', '小说开篇')}" if context.get('start_chapter_id') else ""}
         
         [已知实体设定]:
         {chr(10).join(context['relevant_entities'])}

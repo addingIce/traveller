@@ -14,7 +14,7 @@ class SessionService:
         self.zep = zep_client
         self.neo4j = neo4j_driver
 
-    async def create_session(self, novel_id: str, user_id: str, session_name: str, parent_session_id: Optional[str] = None) -> Dict[str, Any]:
+    async def create_session(self, novel_id: str, user_id: str, session_name: str, parent_session_id: Optional[str] = None, start_chapter_id: Optional[str] = None) -> Dict[str, Any]:
         session_id = str(uuid.uuid4())
         created_at = datetime.utcnow().isoformat()
         
@@ -64,16 +64,20 @@ class SessionService:
             traceback.print_exc()
             raise ne
 
-        # 2. Initialize Zep Session
-        await self.zep.memory.add_session(
-            session_id=session_id,
-            metadata={
+        # 2. Initialize in Zep
+        try:
+            metadata = {
                 "novel_id": novel_id,
                 "user_id": user_id,
-                "name": session_name,
-                "parent_id": parent_session_id or ""
+                "session_name": session_name,
+                "parent_id": parent_session_id
             }
-        )
+            if start_chapter_id:
+                metadata["start_chapter_id"] = start_chapter_id
+
+            await self.zep.memory.add(session_id, [Message(role="system", content="INIT")], metadata=metadata)
+        except Exception as e:
+            print(f"[DEBUG] Session {session_id} Zep initialization failed: {e}")
         
         return {
             "session_id": session_id,
@@ -81,7 +85,8 @@ class SessionService:
             "user_id": user_id,
             "session_name": session_name,
             "created_at": created_at,
-            "parent_session_id": parent_session_id
+            "parent_session_id": parent_session_id,
+            "start_chapter_id": start_chapter_id
         }
 
     async def list_sessions(self, novel_id: str) -> List[Dict[str, Any]]:
