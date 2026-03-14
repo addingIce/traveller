@@ -2730,15 +2730,8 @@ const scrollToSection = (sectionId: string) => {
 
             {/* Modern Modal System */}
             {modalConfig.show && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
-                    <div className="bg-slate-900/90 border border-white/10 rounded-3xl p-8 w-full max-w-md shadow-2xl animate-in zoom-in duration-300 backdrop-blur-xl relative overflow-hidden">
-                        {/* Status Accent Bar */}
-                        <div className={`absolute top-0 left-0 w-full h-1.5 ${
-                            modalConfig.type === 'success' ? 'bg-emerald-500' :
-                            modalConfig.type === 'error' ? 'bg-red-500' :
-                            modalConfig.type === 'warning' ? 'bg-amber-500' : 'bg-sky-500'
-                        }`} />
-                        
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm" style={{ animation: 'fadeIn 0.2s ease-out' }}>
+                    <div className="bg-slate-900/90 border border-white/10 rounded-3xl p-8 w-full max-w-md shadow-2xl backdrop-blur-xl relative overflow-hidden" style={{ animation: 'fadeIn 0.2s ease-out' }}>
                         <div className="flex flex-col items-center text-center">
                             <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-6 ${
                                 modalConfig.type === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
