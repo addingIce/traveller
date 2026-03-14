@@ -1014,7 +1014,7 @@ const scrollToSection = (sectionId: string) => {
 
             <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-[350px_1fr] gap-8 flex-1 w-full min-h-0 overflow-hidden">
                 {/* Sidebar */}
-                <aside className="space-y-6 flex flex-col h-full min-h-0 overflow-y-auto pr-1 custom-scrollbar">
+                <aside className="space-y-6 flex flex-col h-full min-h-0 overflow-hidden">
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-sky-400 font-semibold flex items-center gap-2">
@@ -1261,7 +1261,7 @@ const scrollToSection = (sectionId: string) => {
                     </div>
 
                     {/* Parallel Universes (Sessions) Selector */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 max-h-[400px]">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 h-[320px]">
                         <div className="flex justify-between items-center mb-4">
                             <div className="text-amber-400 font-semibold flex items-center gap-2 text-sm">
                                 <History className="w-4 h-4 shrink-0" />
@@ -1309,7 +1309,7 @@ const scrollToSection = (sectionId: string) => {
                     </div>
                     
                     {/* Bookmark List (Story Snapshots) */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 flex-1 mt-4">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 flex-1 overflow-hidden mt-4">
                         <div className="flex justify-between items-center mb-4">
                             <div className="text-sky-400 font-semibold flex items-center gap-2 text-sm">
                                 <Save className="w-4 h-4 shrink-0" />

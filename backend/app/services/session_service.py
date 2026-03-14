@@ -6,7 +6,7 @@ import httpx
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 from zep_python.client import AsyncZep
-from zep_python import Message
+from zep_python import Message, Memory
 from neo4j import AsyncDriver
 
 class SessionService:
@@ -75,7 +75,14 @@ class SessionService:
             if start_chapter_id:
                 metadata["start_chapter_id"] = start_chapter_id
 
-            await self.zep.memory.add(session_id, [Message(role="system", content="INIT")], metadata=metadata)
+            from zep_python import Memory
+            await self.zep.memory.add_memory(
+                session_id, 
+                Memory(
+                    messages=[Message(role="system", content="INIT")],
+                    metadata=metadata
+                )
+            )
         except Exception as e:
             print(f"[DEBUG] Session {session_id} Zep initialization failed: {e}")
         
@@ -201,7 +208,47 @@ class SessionService:
                 break
         
         if messages_to_copy:
-            await self.zep.memory.add(new_session_id, messages=messages_to_copy)
+            # Use add_memory for cloning
+            from zep_python import Memory
+            await self.zep.memory.add_memory(new_session_id, Memory(messages=messages_to_copy))
+
+        # 4. Clone bookmarks in Neo4j
+        async with self.neo4j.session() as session:
+            copy_bookmarks_query = """
+            MATCH (s:Session {uuid: $old_session_id})-[:HAS_BOOKMARK]->(b:Bookmark)
+            MATCH (ns:Session {uuid: $new_session_id})
+            CREATE (ns)-[:HAS_BOOKMARK]->(nb:Bookmark)
+            SET nb = b, nb.uuid = apoc.create.uuid()
+            RETURN count(nb) as count
+            """
+            # Note: apoc is common, but let's use a simpler way if apoc is missing
+            # or just use python to loop if needed. 
+            # Given we want to be safe, let's fetch and re-create.
+            
+            fetch_query = "MATCH (s:Session {uuid: $old_sid})-[:HAS_BOOKMARK]->(b:Bookmark) RETURN b"
+            res = await session.run(fetch_query, old_sid=session_id)
+            bookmarks = [dict(record["b"]) async for record in res]
+            
+            for bm in bookmarks:
+                new_bm_id = str(uuid.uuid4())
+                create_bm_query = """
+                MATCH (ns:Session {uuid: $ns_id})
+                CREATE (ns)-[:HAS_BOOKMARK]->(nb:Bookmark {
+                    uuid: $uuid,
+                    name: $name,
+                    description: $desc,
+                    created_at: $created,
+                    checkpoint_id: $cp_id
+                })
+                """
+                await session.run(create_bm_query, 
+                    ns_id=new_session_id,
+                    uuid=new_bm_id,
+                    name=bm["name"],
+                    desc=bm.get("description", ""),
+                    created=bm["created_at"],
+                    cp_id=bm["checkpoint_id"]
+                )
 
         return new_session_info
 
