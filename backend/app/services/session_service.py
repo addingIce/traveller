@@ -18,42 +18,46 @@ class SessionService:
         session_id = str(uuid.uuid4())
         created_at = datetime.utcnow().isoformat()
         
+        # 1. Persist in Neo4j
         try:
             async with self.neo4j.session() as session:
+                # Ensure the Novel exists first
+                novel_check = await session.run("MATCH (n:Novel {collection_name: $novel_id}) RETURN n", novel_id=novel_id)
+                if not await novel_check.single():
+                    print(f"[WARNING] Creating session for unknown novel_id: {novel_id}")
+
                 query = """
                 MATCH (n:Novel {collection_name: $novel_id})
                 CREATE (s:Session {
                     uuid: $session_id,
-                    name: $name,
+                    name: $session_name,
                     user_id: $user_id,
                     created_at: $created_at,
-                    last_interaction_at: $created_at
+                    last_interaction_at: $created_at,
+                    is_root: $is_root
                 })
                 CREATE (n)-[:HAS_SESSION]->(s)
-                RETURN s.uuid as id
                 """
                 params = {
                     "novel_id": novel_id,
                     "session_id": session_id,
-                    "name": session_name,
+                    "session_name": session_name,
                     "user_id": user_id,
-                    "created_at": created_at
+                    "created_at": created_at,
+                    "is_root": False
                 }
                 
                 if parent_session_id:
-                    # Append to the query BEFORE return
-                    query = query.replace("RETURN s.uuid as id", "")
                     query += """
                     WITH s
                     MATCH (p:Session {uuid: $parent_id})
                     CREATE (p)-[:BRANCHED_TO]->(s)
                     SET s.parent_session_id = $parent_id
-                    RETURN s.uuid as id
                     """
                     params["parent_id"] = parent_session_id
 
-                result = await session.run(query, **params)
-                await result.single()
+                await session.run(query, **params)
+                print(f"[DEBUG] Session {session_id} persisted in Neo4j for novel {novel_id}")
         except Exception as ne:
             print(f"[ERROR] Neo4j session creation failed: {ne}")
             import traceback
@@ -90,7 +94,7 @@ class SessionService:
                    s.user_id as user_id, 
                    s.created_at as created_at, 
                    s.last_interaction_at as last_interaction_at,
-                   s.parent_session_id as parent_session_id, 
+                   COALESCE(s.parent_session_id, "") as parent_session_id, 
                    COALESCE(s.is_root, false) as is_root
             ORDER BY s.created_at DESC
             """
@@ -105,7 +109,10 @@ class SessionService:
         memory = await self.zep.memory.get(session_id)
         checkpoint_id = ""
         if memory.messages:
-            checkpoint_id = memory.messages[-1].uuid # Use last message UUID as checkpoint
+            last_msg = memory.messages[-1]
+            # Handle different SDK versions where uuid might be under uuid_ or uuid
+            checkpoint_id = getattr(last_msg, "uuid_", getattr(last_msg, "uuid", ""))
+            print(f"[DEBUG] Creating bookmark {name} with checkpoint {checkpoint_id}")
 
         async with self.neo4j.session() as session:
             query = """

@@ -1,6 +1,32 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
 from datetime import datetime
+from enum import Enum
+
+class DirectorMode(str, Enum):
+    SANDBOX = "SANDBOX"
+    CONVERGENCE = "CONVERGENCE"
+
+class IntentSummary(BaseModel):
+    action: Optional[str] = None
+    dialogue: Optional[str] = None
+    thought: Optional[str] = None
+
+class WorldImpact(BaseModel):
+    world_state_changed: bool
+    reason: Optional[str] = None
+
+class ChatRequest(BaseModel):
+    session_id: str
+    novel_id: str
+    message: str
+    mode: Optional[DirectorMode] = DirectorMode.SANDBOX
+
+class ChatResponse(BaseModel):
+    story_text: str
+    user_intent_summary: IntentSummary
+    world_impact: WorldImpact
+    ui_hints: List[str]
 
 class SessionCreate(BaseModel):
     novel_id: str

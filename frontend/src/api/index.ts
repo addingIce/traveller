@@ -7,6 +7,11 @@ const apiClient = axios.create({
     },
 });
 
+export enum DirectorMode {
+    SANDBOX = 'SANDBOX',
+    CONVERGENCE = 'CONVERGENCE',
+}
+
 export interface IntentSummary {
     action?: string;
     dialogue?: string;
@@ -23,6 +28,7 @@ export interface ChatResponse {
     user_intent_summary: IntentSummary;
     world_impact: WorldImpact;
     ui_hints: string[];
+    mode?: DirectorMode;
 }
 
 // Session & Timeline Types
@@ -73,11 +79,17 @@ export const fetchNodeDetail = async (uuid: string) => {
     return data;
 };
 
-export const chatInteract = async (sessionId: string, collectionName: string, message: string): Promise<ChatResponse> => {
+export const chatInteract = async (
+    sessionId: string, 
+    novelId: string, 
+    message: string, 
+    mode: DirectorMode = DirectorMode.SANDBOX
+): Promise<ChatResponse> => {
     const { data } = await apiClient.post('/chat/interact', {
         session_id: sessionId,
-        collection_name: collectionName,
+        novel_id: novelId,
         message,
+        mode,
     });
     return data;
 };

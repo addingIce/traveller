@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
+import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -187,7 +187,8 @@ const App: React.FC = () => {
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Session & Timeline State
-    const [currentSessionId, setCurrentSessionId] = useState<string>('');
+    const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+    const [directorMode, setDirectorMode] = useState<DirectorMode>(DirectorMode.SANDBOX);
     const [sessions, setSessions] = useState<SessionInfo[]>([]);
     const [isSessionsLoading, setIsSessionsLoading] = useState(false);
     const [chapters, setChapters] = useState<ChapterInfo[]>([]);
@@ -924,7 +925,7 @@ const scrollToSection = (sectionId: string) => {
 
         try {
             const sessToUse = currentSessionId || sessionId;
-            const aiResponse = await chatInteract(sessToUse, currentCollection, userMessage);
+            const aiResponse = await chatInteract(sessToUse, currentCollection, userMessage, directorMode);
             setHistory(prev => [...prev, { type: 'ai', ...aiResponse }]);
 
             // If the action caused a long-term change, refresh our graph quietly
@@ -1356,13 +1357,6 @@ const scrollToSection = (sectionId: string) => {
                                                     <p className="text-sm">正在提取实体和关系，请稍候...</p>
                                                 </>
                                             );
-                                        } else if (status === 'ready') {
-                                            return (
-                                                <>
-                                                    <Network className="w-12 h-12 mb-4 opacity-20" />
-                                                    <p className="text-sm">知识图谱暂无数据，可能小说内容较短或未检测到实体。</p>
-                                                </>
-                                            );
                                         } else {
                                             return (
                                                 <>
@@ -1490,6 +1484,37 @@ const scrollToSection = (sectionId: string) => {
                                     </div>
                                 )}
                                 <div ref={messagesEndRef} />
+                            </div>
+
+                            {/* Mode Selector Area */}
+                            <div className="px-6 py-2 flex items-center justify-between border-t border-white/5 bg-slate-800/10 backdrop-blur-sm">
+                                <div className="flex gap-1 bg-black/40 p-1 rounded-xl border border-white/5">
+                                    <button
+                                        onClick={() => setDirectorMode(DirectorMode.SANDBOX)}
+                                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                                            directorMode === DirectorMode.SANDBOX 
+                                            ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20' 
+                                            : 'text-slate-400 hover:text-white'
+                                        }`}
+                                    >
+                                        <Zap className="w-3 h-3" /> 沙盒模式 A
+                                    </button>
+                                    <button
+                                        onClick={() => setDirectorMode(DirectorMode.CONVERGENCE)}
+                                        className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-2 ${
+                                            directorMode === DirectorMode.CONVERGENCE 
+                                            ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' 
+                                            : 'text-slate-400 hover:text-white'
+                                        }`}
+                                    >
+                                        <Target className="w-3 h-3" /> 收束模式 B
+                                    </button>
+                                </div>
+                                <div className="text-[10px] text-slate-500 font-medium">
+                                    {directorMode === DirectorMode.SANDBOX 
+                                        ? "当前状态：自由推演中" 
+                                        : "当前状态：剧情引导中"}
+                                </div>
                             </div>
 
                             {/* Input Area */}
