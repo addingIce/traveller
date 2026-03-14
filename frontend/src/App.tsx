@@ -531,12 +531,15 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const pollStatus = (collectionName: string) => {
+        let lastStatus: string | null = null;
         const interval = setInterval(async () => {
             try {
                 const status = await getNovelStatus(collectionName);
-                if (['completed', 'extracting', 'ready'].includes(status.status)) {
+                // 只在状态首次变为 completed/extracting/ready 时调用 loadChapters
+                if (['completed', 'extracting', 'ready'].includes(status.status) && lastStatus !== status.status) {
                     loadChapters();
                 }
+                lastStatus = status.status;
                 if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
                     clearInterval(interval);
                     await loadNovelsList();
@@ -1081,51 +1084,6 @@ const scrollToSection = (sectionId: string) => {
                         </div>
                     )}
 
-                    {/* Parallel Universes (Sessions) Selector */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 max-h-[400px]">
-                        <div className="flex justify-between items-center mb-4">
-                            <div className="text-amber-400 font-semibold flex items-center gap-2 text-sm">
-                                <History className="w-4 h-4 shrink-0" />
-                                <span>平行宇宙</span>
-                            </div>
-                            <button
-                                onClick={handleCreateSession}
-                                className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 transition-all flex items-center justify-center"
-                                title="开启新的平行宇宙"
-                            >
-                                <Plus className="w-4 h-4" />
-                            </button>
-                        </div>
-                        <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1">
-                            {isSessionsLoading ? (
-                                <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
-                            ) : sessions.length === 0 ? (
-                                <div className="text-center py-4 text-slate-500 text-xs">暂无平行宇宙</div>
-                            ) : (
-                                sessions.map((sess) => (
-                                    <div
-                                        key={sess.session_id}
-                                        onClick={() => handleSwitchSession(sess.session_id)}
-                                        className={`p-3 rounded-xl cursor-pointer transition-all border ${
-                                            currentSessionId === sess.session_id
-                                                ? 'bg-amber-500/10 border-amber-500/50'
-                                                : 'bg-white/5 border-white/5 hover:border-white/10'
-                                        }`}
-                                    >
-                                        <div className="font-medium truncate text-sm flex items-center gap-2 h-5">
-                                            {sess.is_root && <BookOpen className="w-3 h-3 text-sky-400 shrink-0" />}
-                                            <span className="truncate leading-none">{sess.session_name}</span>
-                                        </div>
-                                        <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
-                                            <span>{sess.is_root ? '原始剧情线' : '玩家分支'}</span>
-                                            <span>{sess.last_interaction_at ? new Date(sess.last_interaction_at).toLocaleDateString() : '尚未开始'}</span>
-                                        </div>
-                                    </div>
-                                ))
-                            )}
-                        </div>
-                    </div>
-
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <h2 className="text-sky-400 font-semibold mb-4">世界设定统计</h2>
                         <div className="grid grid-cols-2 gap-4 text-center">
@@ -1254,6 +1212,51 @@ const scrollToSection = (sectionId: string) => {
                         )}
                     </div>
 
+                    {/* Parallel Universes (Sessions) Selector */}
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 max-h-[400px]">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="text-amber-400 font-semibold flex items-center gap-2 text-sm">
+                                <History className="w-4 h-4 shrink-0" />
+                                <span>平行宇宙</span>
+                            </div>
+                            <button
+                                onClick={handleCreateSession}
+                                className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 transition-all flex items-center justify-center"
+                                title="开启新的平行宇宙"
+                            >
+                                <Plus className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1">
+                            {isSessionsLoading ? (
+                                <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
+                            ) : sessions.length === 0 ? (
+                                <div className="text-center py-4 text-slate-500 text-xs">暂无平行宇宙</div>
+                            ) : (
+                                sessions.map((sess) => (
+                                    <div
+                                        key={sess.session_id}
+                                        onClick={() => handleSwitchSession(sess.session_id)}
+                                        className={`p-3 rounded-xl cursor-pointer transition-all border ${
+                                            currentSessionId === sess.session_id
+                                                ? 'bg-amber-500/10 border-amber-500/50'
+                                                : 'bg-white/5 border-white/5 hover:border-white/10'
+                                        }`}
+                                    >
+                                        <div className="font-medium truncate text-sm flex items-center gap-2 h-5">
+                                            {sess.is_root && <BookOpen className="w-3 h-3 text-sky-400 shrink-0" />}
+                                            <span className="truncate leading-none">{sess.session_name}</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
+                                            <span>{sess.is_root ? '原始剧情线' : '玩家分支'}</span>
+                                            <span>{sess.last_interaction_at ? new Date(sess.last_interaction_at).toLocaleDateString() : '尚未开始'}</span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
                 </aside>
 
                 {/* Content Area */}
@@ -1265,7 +1268,7 @@ const scrollToSection = (sectionId: string) => {
                             <div className="inline-flex items-center gap-1 rounded-xl bg-white/5 border border-white/10 p-1">
                                 <button
                                     onClick={() => setActiveTab('plot')}
-                                    className={`h-8 px-4 rounded-lg text-sm leading-none transition-all flex items-center gap-2 ${
+                                    className={`h-8 px-4 rounded-lg text-sm leading-tight transition-all flex items-center gap-2 ${
                                         activeTab === 'plot'
                                             ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20'
                                             : 'text-slate-400 hover:text-white'
@@ -1276,7 +1279,7 @@ const scrollToSection = (sectionId: string) => {
                                 </button>
                                 <button
                                     onClick={() => setActiveTab('graph')}
-                                    className={`h-8 px-4 rounded-lg text-sm leading-none transition-all flex items-center gap-2 ${
+                                    className={`h-8 px-4 rounded-lg text-sm leading-tight transition-all flex items-center gap-2 ${
                                         activeTab === 'graph'
                                             ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'
                                             : 'text-slate-400 hover:text-white'

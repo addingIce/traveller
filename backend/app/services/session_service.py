@@ -183,33 +183,45 @@ class SessionService:
         # The original storyline messages have role="讲述者"
         try:
             session_id = novel_id if novel_id.startswith("novel_") else f"novel_{novel_id}"
+            print(f"[DEBUG] extract_chapters: novel_id={novel_id}, session_id={session_id}")
             messages = []
             # 1) Prefer Zep HTTP API (more stable)
             try:
                 zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
+                zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
+                print(f"[DEBUG] Calling Zep HTTP API: {zep_api_url}/api/v1/session/{session_id}/messages")
                 async with httpx.AsyncClient(timeout=10.0) as http_client:
                     resp = await http_client.get(
-                        f"{zep_api_url}/sessions/{session_id}/messages",
-                        params={"limit": 200}
+                        f"{zep_api_url}/api/v1/session/{session_id}/messages",
+                        params={"limit": 200},
+                        headers={"Authorization": f"Bearer {zep_api_key}"}
                     )
+                    print(f"[DEBUG] Zep HTTP response status: {resp.status_code}")
                     if resp.status_code == 200:
                         data = resp.json()
                         raw_messages = data.get("messages") or []
+                        print(f"[DEBUG] Zep HTTP returned {len(raw_messages)} raw messages")
                         for msg in raw_messages:
                             content = (msg.get("content") or "").strip()
                             if not content:
                                 continue
                             messages.append(type("Msg", (), {"uuid": msg.get("uuid"), "content": content})())
+                    else:
+                        print(f"[DEBUG] Zep HTTP error: {resp.text[:200]}")
             except Exception as http_err:
-                print(f"Error extracting chapters from Zep HTTP: {http_err}")
+                print(f"[ERROR] extracting chapters from Zep HTTP: {http_err}")
 
             # 2) Fallback to Zep SDK
             if not messages:
+                print(f"[DEBUG] Falling back to Zep SDK...")
                 try:
                     memory = await self.zep.memory.get(session_id)
                     messages = memory.messages or []
+                    print(f"[DEBUG] Zep SDK returned {len(messages)} messages")
                 except Exception as sdk_err:
-                    print(f"Error extracting chapters from Zep SDK: {sdk_err}")
+                    print(f"[ERROR] extracting chapters from Zep SDK: {sdk_err}")
+            
+            print(f"[DEBUG] Total messages to process: {len(messages)}")
             
             chapters = []
             # Regex for Chinese chapter titles: 第[一二三四五六七八九十百千0-9]+[章节回堂回讲课]...
@@ -227,29 +239,58 @@ class SessionService:
                 if not content:
                     continue
                 
-                # Check first line
-                first_line = content.split('\n')[0].strip()
-                match = chapter_pattern.match(first_line)
+                msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                lines = content.split('\n')
                 
-                # If matched or if it's a very short first line (likely a title)
-                if match or (len(first_line) < 30 and first_line.endswith(('：', ':'))):
-                    title = first_line
-                    # Remove some common symbols from title
-                    title = re.sub(r"^[#\s\*\-]+", "", title).strip()
-                    
-                    preview = content[:200] + "..." if len(content) > 200 else content
-                    chapters.append({
-                        "id": msg.uuid,
-                        "title": title or f"章节 {len(chapters) + 1}",
-                        "content_preview": preview,
-                        "order": len(chapters) + 1
-                    })
+                # Scan all lines to find chapter titles
+                chapter_positions = []  # [(line_index, title)]
+                for line_idx, line in enumerate(lines):
+                    line_stripped = line.strip()
+                    match = chapter_pattern.match(line_stripped)
+                    if match:
+                        title = re.sub(r"^[#\s\*\-]+", "", line_stripped).strip()
+                        chapter_positions.append((line_idx, title))
+                
+                # If found chapters in this message, extract them
+                if chapter_positions:
+                    print(f"[DEBUG] Found {len(chapter_positions)} chapters in message {i}")
+                    for idx, (start_line, title) in enumerate(chapter_positions):
+                        # Determine end line (next chapter start or end of content)
+                        if idx + 1 < len(chapter_positions):
+                            end_line = chapter_positions[idx + 1][0]
+                        else:
+                            end_line = len(lines)
+                        
+                        # Extract chapter content
+                        chapter_lines = lines[start_line:end_line]
+                        chapter_content = '\n'.join(chapter_lines).strip()
+                        
+                        preview = chapter_content[:200] + "..." if len(chapter_content) > 200 else chapter_content
+                        chapters.append({
+                            "id": f"{msg_id}-ch{idx+1}",
+                            "title": title or f"章节 {len(chapters) + 1}",
+                            "content_preview": preview,
+                            "order": len(chapters) + 1
+                        })
+                else:
+                    # No chapters found in this message, check if first line looks like a title
+                    first_line = lines[0].strip() if lines else ""
+                    if len(first_line) < 30 and first_line.endswith(('：', ':')):
+                        title = re.sub(r"^[#\s\*\-]+", "", first_line).strip()
+                        preview = content[:200] + "..." if len(content) > 200 else content
+                        chapters.append({
+                            "id": msg_id,
+                            "title": title or f"章节 {len(chapters) + 1}",
+                            "content_preview": preview,
+                            "order": len(chapters) + 1
+                        })
             
             # If no chapters found via regex, we might just return the first few chunks as "segments"
             if not chapters and messages:
                 for i, msg in enumerate(messages[:10]): # Limit to first 10 for preview
+                    msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
                     chapters.append({
-                        "id": msg.uuid,
+                        "id": msg_id,
                         "title": f"片段 {i+1}",
                         "content_preview": msg.content[:200] + "...",
                         "order": i + 1

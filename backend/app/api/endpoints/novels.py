@@ -454,10 +454,12 @@ async def delete_novel(collection_name: str, request: Request):
             # 这里尝试使用 HTTP API 删除 session
             import httpx
             zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
+            zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
             async with httpx.AsyncClient() as http_client:
                 # 尝试删除 session
                 response = await http_client.delete(
-                    f"{zep_api_url}/sessions/{collection_name}"
+                    f"{zep_api_url}/api/v1/session/{collection_name}",
+                    headers={"Authorization": f"Bearer {zep_api_key}"}
                 )
                 if response.status_code == 200 or response.status_code == 204:
                     print(f"[INFO] Zep session {collection_name} 已删除")

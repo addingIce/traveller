@@ -497,10 +497,12 @@ async def check_zep_messages(collection_name: str) -> int:
         import httpx
         import os
         zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
+        zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
         async with httpx.AsyncClient(timeout=30.0) as http_client:
             response = await http_client.get(
-                f"{zep_api_url}/sessions/{collection_name}/messages",
-                params={"limit": 1}
+                f"{zep_api_url}/api/v1/session/{collection_name}/messages",
+                params={"limit": 1},
+                headers={"Authorization": f"Bearer {zep_api_key}"}
             )
             if response.status_code == 200:
                 data = response.json()
