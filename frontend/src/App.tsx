@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
+import { Network, History, Brain, ChevronRight, ChevronDown, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
 import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage, getSessionWaypoints, WaypointStatus } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
@@ -211,6 +211,10 @@ const App: React.FC = () => {
     const [isBookmarksLoading, setIsBookmarksLoading] = useState(false);
     const [waypoints, setWaypoints] = useState<WaypointStatus[]>([]);
     const [isWaypointsLoading, setIsWaypointsLoading] = useState(false);
+
+    // Sidebar Expand/Collapse State
+    const [isNovelListExpanded, setIsNovelListExpanded] = useState(true);
+    const [isSessionsExpanded, setIsSessionsExpanded] = useState(true);
 
     // System Config State
     const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -702,13 +706,23 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const handleSelectNovel = (collectionName: string) => {
-        if (currentCollection === collectionName) return;
+        if (currentCollection === collectionName) {
+            // 点击当前选中的小说，切换展开状态
+            setIsNovelListExpanded(!isNovelListExpanded);
+            return;
+        }
         setCurrentCollection(collectionName);
         setCurrentSessionId(''); // Reset session when switching novel
         setSessions([]);
         setChapters([]);
         setHistory([]); // Immediately clear history to prevent flickering
         clearGraph();
+        setIsNovelListExpanded(false); // Auto collapse after selection
+        // Clear search state
+        setSearchInput('');
+        setSearchResults(null);
+        setNodeDetail(null);
+        setEdgeDetail(null);
     };
 
     // --- Session & Timeline Functions ---
@@ -772,7 +786,14 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const handleSwitchSession = async (sid: string) => {
-        setCurrentSessionId(sid);
+        if (currentSessionId === sid) {
+            // 点击当前选中的 session，切换展开状态
+            setIsSessionsExpanded(!isSessionsExpanded);
+        } else {
+            // 选中新 session，更新并折叠
+            setCurrentSessionId(sid);
+            setIsSessionsExpanded(false);
+        }
         // Effects handled by useEffect[currentSessionId]
     };
 
@@ -1196,17 +1217,25 @@ const scrollToSection = (sectionId: string) => {
                 <aside className="space-y-6 flex flex-col h-full min-h-0 overflow-y-auto pr-2 custom-scrollbar">
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-sky-400 font-semibold flex items-center gap-2">
-                                <BookOpen className="w-4 h-4" /> 作品档案库
-                            </h2>
-                            <button
-                                onClick={handleUploadClick}
-                                disabled={isUploading}
-                                className="p-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                title="上传新小说"
+                            <h2
+                                className="text-sky-400 font-semibold flex items-center gap-2 cursor-pointer hover:text-sky-300 transition-colors"
+                                onClick={() => setIsNovelListExpanded(!isNovelListExpanded)}
                             >
-                                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                            </button>
+                                <BookOpen className="w-4 h-4" />
+                                <span>作品档案库</span>
+                                <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isNovelListExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                            </h2>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">{novels.length}</span>
+                                <button
+                                    onClick={handleUploadClick}
+                                    disabled={isUploading}
+                                    className="p-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    title="上传新小说"
+                                >
+                                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                                </button>
+                            </div>
                         </div>
                         <input
                             ref={fileInputRef}
@@ -1222,7 +1251,9 @@ const scrollToSection = (sectionId: string) => {
                                     暂无小说，点击 + 上传
                                 </div>
                             )}
-                            {novels.map((novel) => (
+                            {novels
+                                .filter(novel => isNovelListExpanded || currentCollection === novel.collection_name)
+                                .map((novel) => (
                                 <div
                                     key={novel.collection_name}
                                     className={`p-3 rounded-xl cursor-pointer transition-all border ${
@@ -1309,26 +1340,12 @@ const scrollToSection = (sectionId: string) => {
                         </div>
                     )}
 
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 backdrop-blur-sm">
-                        <div className="flex justify-between items-center mb-3">
-                            <h2 className="text-sky-400 font-semibold text-sm">图景统计</h2>
-                            <button onClick={() => loadGraph()} title="强制刷新" className="text-slate-500 hover:text-sky-400 transition-colors">
-                                <RefreshCw className="w-3 h-3" />
-                            </button>
-                        </div>
-                        <div className="grid grid-cols-2 gap-3 text-center">
-                            <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                                <div className="text-lg font-bold text-white">{graphData?.nodes?.length || 0}</div>
-                                <div className="text-[9px] text-slate-500 uppercase tracking-widest mt-0.5">实体</div>
-                            </div>
-                            <div className="bg-white/5 p-2.5 rounded-xl border border-white/5">
-                                <div className="text-lg font-bold text-white">{graphData?.edges?.length || 0}</div>
-                                <div className="text-[9px] text-slate-500 uppercase tracking-widest mt-0.5">关系</div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div ref={searchPanelRef} className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 backdrop-blur-sm">
+                    <div 
+                        ref={searchPanelRef} 
+                        className={`bg-slate-800/50 border border-white/10 rounded-2xl p-4 backdrop-blur-sm transition-all duration-300 overflow-hidden ${
+                            activeTab === 'graph' ? 'opacity-100 max-h-[600px]' : 'opacity-0 max-h-0 p-0 border-0'
+                        }`}
+                    >
                         <h2 className="text-sky-400 font-semibold mb-3 flex items-center gap-2 text-sm">
                             <Search className="w-3 h-3" /> 搜索世界实体
                         </h2>
@@ -1438,33 +1455,41 @@ const scrollToSection = (sectionId: string) => {
                             </div>
                         )}
                     </div>
+                    )}
 
                     {/* Parallel Universes (Sessions) Selector */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-[300px]">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col">
                         <div className="flex justify-between items-center mb-4">
-                            <div className="text-amber-400 font-semibold flex items-center gap-2 text-sm">
+                            <div
+                                className="text-amber-400 font-semibold flex items-center gap-2 text-sm cursor-pointer hover:text-amber-300 transition-colors"
+                                onClick={() => setIsSessionsExpanded(!isSessionsExpanded)}
+                            >
                                 <History className="w-4 h-4 shrink-0" />
                                 <span>平行宇宙</span>
+                                <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isSessionsExpanded ? 'rotate-0' : '-rotate-90'}`} />
                             </div>
-                            <button
-                                onClick={() => {
-                                    if (!isNovelReady) {
-                                        showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
-                                        return;
-                                    }
-                                    setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
-                                    setShowNewSessionModal(true);
-                                }}
-                                disabled={!isNovelReady}
-                                className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center border ${
-                                    isNovelReady 
-                                        ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20'
-                                        : 'bg-slate-700/50 text-slate-500 border-slate-700 cursor-not-allowed'
-                                }`}
-                                title={isNovelReady ? "开启新的平行宇宙" : "作品未就绪，无法创建平行宇宙"}
-                            >
-                                <Plus className="w-4 h-4" />
-                            </button>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">{sessions.length}</span>
+                                <button
+                                    onClick={() => {
+                                        if (!isNovelReady) {
+                                            showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
+                                            return;
+                                        }
+                                        setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
+                                        setShowNewSessionModal(true);
+                                    }}
+                                    disabled={!isNovelReady}
+                                    className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center border ${
+                                        isNovelReady 
+                                            ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20'
+                                            : 'bg-slate-700/50 text-slate-500 border-slate-700 cursor-not-allowed'
+                                    }`}
+                                    title={isNovelReady ? "开启新的平行宇宙" : "作品未就绪，无法创建平行宇宙"}
+                                >
+                                    <Plus className="w-4 h-4" />
+                                </button>
+                            </div>
                         </div>
                         <div className="space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
                             {isSessionsLoading ? (
@@ -1472,7 +1497,9 @@ const scrollToSection = (sectionId: string) => {
                             ) : sessions.length === 0 ? (
                                 <div className="text-center py-4 text-slate-500 text-xs">暂无平行宇宙</div>
                             ) : (
-                                sessions.map((sess) => (
+                                sessions
+                                    .filter(sess => isSessionsExpanded || currentSessionId === sess.session_id)
+                                    .map((sess) => (
                                     <div
                                         key={sess.session_id}
                                         onClick={() => handleSwitchSession(sess.session_id)}
@@ -1509,7 +1536,7 @@ const scrollToSection = (sectionId: string) => {
                     </div>
                     
                     {/* Waypoints / Story Milestones */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-[200px] mt-4">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col mt-4">
                         <div className="flex justify-between items-center mb-4">
                             <div className="text-emerald-400 font-semibold flex items-center gap-2 text-sm">
                                 <Target className="w-4 h-4 shrink-0" />
@@ -1542,9 +1569,6 @@ const scrollToSection = (sectionId: string) => {
                                                 <div className={`text-xs font-semibold truncate ${wp.reached ? 'text-emerald-400' : 'text-slate-300'}`}>
                                                     {wp.title}
                                                 </div>
-                                                <div className="text-[10px] text-slate-500 line-clamp-2 mt-0.5">
-                                                    {wp.description}
-                                                </div>
                                             </div>
                                         </div>
                                         {wp.reached && wp.reached_at && (
@@ -1559,7 +1583,7 @@ const scrollToSection = (sectionId: string) => {
                     </div>
 
                     {/* Bookmark List (Story Snapshots) */}
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-[300px] mt-4">
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col mt-4">
                         <div className="flex justify-between items-center mb-4">
                             <div className="text-sky-400 font-semibold flex items-center gap-2 text-sm">
                                 <Save className="w-4 h-4 shrink-0" />
@@ -1636,6 +1660,11 @@ const scrollToSection = (sectionId: string) => {
                                 >
                                     <Network className="w-4 h-4 shrink-0" />
                                     <span>Zep 物理图谱</span>
+                                    {activeTab === 'graph' && (
+                                        <span className="text-[10px] opacity-70 ml-1">
+                                            ({graphData?.nodes?.length || 0}实体, {graphData?.edges?.length || 0}关系)
+                                        </span>
+                                    )}
                                 </button>
                             </div>
                         </div>
