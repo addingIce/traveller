@@ -32,13 +32,17 @@ class ActionParser:
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
-                response_format={"type": "json_object"},
+                # 兼容性：某些代理商不支持 json_object 模式，改用 Prompt 约束 + 鲁棒解析
+                # response_format={"type": "json_object"},
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_prompt + "\n请务必只输出 JSON，不要有任何其他解释文字。"},
                     {"role": "user", "content": user_input}
                 ],
                 temperature=0,
             )
+            if not response.choices or not response.choices[0].message.content:
+                return {"action": None, "dialogue": user_input, "thought": None, "intensity": 3, "metadata": {"fallback": True}}
+            
             content = response.choices[0].message.content
             parsed = json.loads(content)
             parsed["metadata"] = {"manual": False}
@@ -232,13 +236,17 @@ class DirectorAI:
         try:
             response = await self.client.chat.completions.create(
                 model=self.model,
-                response_format={"type": "json_object"},
+                # 兼容性：某些代理商不支持 json_object 模式，改用 Prompt 约束 + 鲁棒解析
+                # response_format={"type": "json_object"},
                 messages=[
-                    {"role": "system", "content": system_prompt},
+                    {"role": "system", "content": system_prompt + "\n请严格遵守 JSON 格式输出。"},
                     {"role": "user", "content": user_content}
                 ],
                 temperature=0.7,
             )
+            if not response.choices or not response.choices[0].message.content:
+                 raise ValueError("LLM 响应无效或 choices 为空")
+                 
             content = response.choices[0].message.content
             return self._robust_json_parse(content)
         except Exception as e:

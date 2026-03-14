@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 from zep_python.client import AsyncZep
 from neo4j import GraphDatabase, AsyncGraphDatabase
 
-# 加载环境变量
-load_dotenv()
+# 加载环境变量 (强制指定路径以防 uvicorn 加载失败)
+env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", ".env")
+load_dotenv(dotenv_path=env_path, override=True)
 
 ZEP_API_URL = os.getenv("ZEP_API_URL", "http://localhost:8000")
 ZEP_API_KEY = os.getenv("ZEP_API_KEY", "")

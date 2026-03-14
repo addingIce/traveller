@@ -18,11 +18,11 @@ MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
 from app.services.director_service import ActionParser, ContextAssembler, DirectorAI
 from app.models.schemas import ChatRequest, ChatResponse, DirectorMode
 
-# 初始化 OpenAI Async 客户端
-aclient = AsyncOpenAI(
-    api_key=OPENAI_API_KEY,
-    base_url=OPENAI_BASE_URL
-)
+# 延迟初始化客户端以确保环境变量已加载
+def get_aclient():
+    key = os.getenv("OPENAI_API_KEY", "")
+    url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    return AsyncOpenAI(api_key=key, base_url=url)
 
 @router.post("/interact", response_model=ChatResponse)
 async def chat_interact(req: ChatRequest, request: Request):
@@ -36,6 +36,7 @@ async def chat_interact(req: ChatRequest, request: Request):
             raise HTTPException(status_code=503, detail="基础服务未就绪")
         
         # 1. 初始化组件
+        aclient = get_aclient()
         parser = ActionParser(aclient, MODEL_PARSER)
         assembler = ContextAssembler(zep, neo4j)
         director = DirectorAI(aclient, MODEL_DIRECTOR)
