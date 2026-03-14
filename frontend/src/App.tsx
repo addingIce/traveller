@@ -198,6 +198,7 @@ const App: React.FC = () => {
     const graphContainer = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const searchPanelRef = useRef<HTMLDivElement>(null);
 
     // Auto scroll to bottom
     useEffect(() => {
@@ -293,12 +294,13 @@ const App: React.FC = () => {
         }
     }, [novels, currentCollection]);
 
-    // Load graph when currentCollection changes
+    // Load graph data whenever currentCollection changes.
+    // This keeps sidebar statistics in sync even when graph tab is not active.
     useEffect(() => {
-        if (currentCollection && activeTab === 'graph') {
-            loadGraph();
+        if (currentCollection) {
+            loadGraph(activeTab === 'graph');
         }
-    }, [currentCollection, activeTab]);
+    }, [currentCollection]);
 
     // Handle Tab Switch & Graph Load
     useEffect(() => {
@@ -403,7 +405,7 @@ const handleRestartServices = async () => {
     }
 };
 
-const loadGraph = async () => {
+const loadGraph = async (renderNow: boolean = true) => {
     if (!currentCollection) {
         console.log("No collection selected, skipping graph load");
         return;
@@ -412,7 +414,7 @@ const loadGraph = async () => {
     try {
         const data = await fetchKnowledgeGraph(currentCollection);
         setGraphData(data);
-        if (activeTab === 'graph') renderGraph(data);
+        if (renderNow && activeTab === 'graph') renderGraph(data);
     } catch (e) {
         console.error("加载图谱失败", e);
     } finally {
@@ -553,6 +555,11 @@ const scrollToSection = (sectionId: string) => {
         fileInputRef.current?.click();
     };
 
+    const scrollToSearchPanel = () => {
+        if (!searchPanelRef.current) return;
+        searchPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
@@ -648,6 +655,7 @@ const scrollToSection = (sectionId: string) => {
             setEdgeDetail(model);
             setSelectedNodeId(null);
             setNodeDetail(null);
+            scrollToSearchPanel();
             if (graphRef.current) {
                 graphRef.current.getNodes().forEach((n: any) => {
                     graphRef.current.setItemState(n, 'selected', false);
@@ -699,6 +707,7 @@ const scrollToSection = (sectionId: string) => {
         setSelectedNodeId(id);
         setSelectedEdgeId(null);
         setEdgeDetail(null);
+        scrollToSearchPanel();
         const detail = await fetchNodeDetail(id);
         setNodeDetail(detail);
 
@@ -755,7 +764,7 @@ const scrollToSection = (sectionId: string) => {
     };
 
     return (
-        <div className="min-h-screen bg-[#0f172a] text-[#f1f5f9] font-sans selection:bg-sky-500/30 flex flex-col">
+        <div className="h-screen overflow-hidden bg-[#0f172a] text-[#f1f5f9] font-sans selection:bg-sky-500/30 flex flex-col">
             {/* Header */}
             <header className="border-b border-white/10 px-8 py-4 flex justify-between items-center backdrop-blur-md sticky top-0 z-50">
                 <div className="flex items-center gap-3">
@@ -781,9 +790,9 @@ const scrollToSection = (sectionId: string) => {
                 </div>
             </header>
 
-            <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-[350px_1fr] gap-8 flex-1 w-full">
+            <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-[350px_1fr] gap-8 flex-1 w-full min-h-0 overflow-hidden">
                 {/* Sidebar */}
-                <aside className="space-y-6 flex flex-col">
+                <aside className="space-y-6 flex flex-col h-full min-h-0 overflow-y-auto pr-1 custom-scrollbar">
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-sky-400 font-semibold flex items-center gap-2">
@@ -900,6 +909,23 @@ const scrollToSection = (sectionId: string) => {
                     )}
 
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
+                        <h2 className="text-sky-400 font-semibold mb-4">世界设定统计</h2>
+                        <div className="grid grid-cols-2 gap-4 text-center">
+                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                                <div className="text-2xl font-bold">{graphData?.nodes?.length || 0}</div>
+                                <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">实体角色</div>
+                            </div>
+                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
+                                <div className="text-2xl font-bold">{graphData?.edges?.length || 0}</div>
+                                <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">物理关系</div>
+                            </div>
+                        </div>
+                        <button onClick={() => loadGraph()} className="w-full mt-4 text-xs py-2 bg-white/5 hover:bg-white/10 transition-colors rounded-lg border border-white/10">
+                            强制刷新后台图谱
+                        </button>
+                    </div>
+
+                    <div ref={searchPanelRef} className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <h2 className="text-sky-400 font-semibold mb-4 flex items-center gap-2">
                             <Search className="w-4 h-4" /> 搜索世界实体
                         </h2>
@@ -1000,26 +1026,10 @@ const scrollToSection = (sectionId: string) => {
                         )}
                     </div>
 
-                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
-                        <h2 className="text-sky-400 font-semibold mb-4">世界设定统计</h2>
-                        <div className="grid grid-cols-2 gap-4 text-center">
-                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                                <div className="text-2xl font-bold">{graphData?.nodes?.length || 0}</div>
-                                <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">实体角色</div>
-                            </div>
-                            <div className="bg-white/5 p-4 rounded-xl border border-white/5">
-                                <div className="text-2xl font-bold">{graphData?.edges?.length || 0}</div>
-                                <div className="text-[10px] text-slate-500 uppercase tracking-widest mt-1">物理关系</div>
-                            </div>
-                        </div>
-                        <button onClick={loadGraph} className="w-full mt-4 text-xs py-2 bg-white/5 hover:bg-white/10 transition-colors rounded-lg border border-white/10">
-                            强制刷新后台图谱
-                        </button>
-                    </div>
                 </aside>
 
                 {/* Content Area */}
-                <section className="flex flex-col flex-1 h-[calc(100vh-8rem)]">
+                <section className="flex flex-col flex-1 h-full min-h-0">
                     <div className="bg-slate-800/50 flex flex-col border border-white/10 rounded-3xl overflow-hidden backdrop-blur-sm shadow-2xl h-full relative">
 
                         {/* Nav Tabs */}
