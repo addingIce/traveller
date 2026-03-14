@@ -401,3 +401,91 @@ class SessionService:
         except Exception as e:
             print(f"Error extracting chapters: {e}")
             return []
+
+    async def delete_session(self, session_id: str) -> bool:
+        """删除 Session 及其关联数据（Neo4j + Zep）"""
+        try:
+            # 1. 检查是否是 root session
+            async with self.neo4j.session() as session:
+                result = await session.run(
+                    "MATCH (s:Session {uuid: $sid}) RETURN s.is_root as is_root",
+                    sid=session_id
+                )
+                record = await result.single()
+                if record and record.get("is_root"):
+                    raise ValueError("不能删除原始剧情线（root session）")
+
+            # 2. 删除 Neo4j 中的 Session 和关联的 Bookmark
+            async with self.neo4j.session() as session:
+                # 先删除关联的 bookmarks
+                await session.run(
+                    """
+                    MATCH (s:Session {uuid: $sid})-[:HAS_BOOKMARK]->(b:Bookmark)
+                    DETACH DELETE b
+                    """,
+                    sid=session_id
+                )
+                # 再删除 session 节点
+                await session.run(
+                    """
+                    MATCH (s:Session {uuid: $sid})
+                    DETACH DELETE s
+                    """,
+                    sid=session_id
+                )
+                print(f"[INFO] Deleted session {session_id} from Neo4j")
+
+            # 3. 删除 Zep memory
+            try:
+                await self.zep.memory.delete_memory(session_id)
+                print(f"[INFO] Deleted session {session_id} from Zep")
+            except Exception as zep_err:
+                print(f"[WARNING] Failed to delete Zep memory for {session_id}: {zep_err}")
+                # 不抛出异常，因为 Neo4j 已删除成功
+
+            return True
+        except ValueError:
+            raise
+        except Exception as e:
+            print(f"[ERROR] Failed to delete session {session_id}: {e}")
+            raise
+
+    async def delete_bookmark(self, session_id: str, bookmark_id: str) -> bool:
+        """删除 Bookmark"""
+        try:
+            async with self.neo4j.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (s:Session {uuid: $sid})-[:HAS_BOOKMARK]->(b:Bookmark {uuid: $bid})
+                    DETACH DELETE b
+                    RETURN count(b) as deleted
+                    """,
+                    sid=session_id, bid=bookmark_id
+                )
+                record = await result.single()
+                if record and record.get("deleted", 0) > 0:
+                    print(f"[INFO] Deleted bookmark {bookmark_id} from session {session_id}")
+                    return True
+                else:
+                    print(f"[WARNING] Bookmark {bookmark_id} not found in session {session_id}")
+                    return False
+        except Exception as e:
+            print(f"[ERROR] Failed to delete bookmark {bookmark_id}: {e}")
+            raise
+
+    async def get_session_messages(self, session_id: str) -> List[Dict[str, Any]]:
+        """获取 Session 的历史消息"""
+        try:
+            memory = await self.zep.memory.get(session_id)
+            messages = []
+            for msg in memory.messages or []:
+                messages.append({
+                    "role": msg.role,
+                    "content": msg.content,
+                    "created_at": getattr(msg, 'created_at', None),
+                })
+            print(f"[INFO] Retrieved {len(messages)} messages for session {session_id}")
+            return messages
+        except Exception as e:
+            print(f"[ERROR] Failed to get messages for session {session_id}: {e}")
+            return []

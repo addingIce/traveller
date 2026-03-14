@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -609,10 +609,17 @@ const scrollToSection = (sectionId: string) => {
             const data = await listSessions(currentCollection);
             setSessions(data);
             
-            // Auto select root session or the most recent one if no current session
+            // Auto select: prefer root session, then first session if no root
             if (data.length > 0) {
                 const root = data.find(s => s.is_root);
-                setCurrentSessionId(root?.session_id || data[0].session_id);
+                const targetId = root?.session_id || data[0].session_id;
+                // Only update if not already selected
+                if (currentSessionId !== targetId) {
+                    setCurrentSessionId(targetId);
+                }
+            } else {
+                // No sessions available, clear selection
+                setCurrentSessionId('');
             }
         } catch (e) {
             console.error("加载 Session 失败", e);
@@ -650,11 +657,34 @@ const scrollToSection = (sectionId: string) => {
         }
     };
 
-    const handleSwitchSession = (sid: string) => {
+    const handleSwitchSession = async (sid: string) => {
         setCurrentSessionId(sid);
-        setHistory([]); // In a real app, we might want to reload history from Zep
+        setHistory([]);
         loadGraph();
         loadBookmarks(sid);
+        
+        // 加载历史消息
+        try {
+            const messages = await getSessionMessages(sid);
+            const historyItems: (ChatResponse & { type: 'ai' } | { type: 'user', content: string })[] = [];
+            
+            for (const msg of messages) {
+                if (msg.role === 'user') {
+                    historyItems.push({ type: 'user', content: msg.content });
+                } else if (msg.role === 'assistant') {
+                    historyItems.push({
+                        type: 'ai',
+                        story_text: msg.content,
+                        user_intent_summary: { action: undefined, dialogue: undefined, thought: undefined },
+                        world_impact: { world_state_changed: false },
+                        ui_hints: []
+                    });
+                }
+            }
+            setHistory(historyItems);
+        } catch (e) {
+            console.error("Failed to load session history", e);
+        }
     };
 
     const loadBookmarks = async (sid: string) => {
@@ -695,6 +725,49 @@ const scrollToSection = (sectionId: string) => {
             alert("开启平行宇宙分支失败");
         } finally {
             setIsSessionsLoading(false);
+        }
+    };
+
+    const handleDeleteSession = async (sessionId: string, sessionName: string, isRoot: boolean) => {
+        if (isRoot) {
+            alert("不能删除原始剧情线！");
+            return;
+        }
+        if (!confirm(`确定要删除平行宇宙「${sessionName}」吗？此操作不可撤销。`)) {
+            return;
+        }
+        try {
+            await deleteSession(sessionId);
+            await loadSessions();
+            // If deleted session was current, switch to root or first
+            if (currentSessionId === sessionId) {
+                const root = sessions.find(s => s.is_root && s.session_id !== sessionId);
+                if (root) {
+                    setCurrentSessionId(root.session_id);
+                } else if (sessions.length > 1) {
+                    const remaining = sessions.filter(s => s.session_id !== sessionId);
+                    setCurrentSessionId(remaining[0].session_id);
+                } else {
+                    setCurrentSessionId('');
+                }
+            }
+            alert(`平行宇宙「${sessionName}」已删除`);
+        } catch (e: any) {
+            alert(e.response?.data?.detail || "删除失败");
+        }
+    };
+
+    const handleDeleteBookmark = async (bookmarkId: string, bookmarkName: string) => {
+        if (!currentSessionId) return;
+        if (!confirm(`确定要删除书签「${bookmarkName}」吗？此操作不可撤销。`)) {
+            return;
+        }
+        try {
+            await deleteBookmark(currentSessionId, bookmarkId);
+            await loadBookmarks(currentSessionId);
+            alert(`书签「${bookmarkName}」已删除`);
+        } catch (e: any) {
+            alert(e.response?.data?.detail || "删除失败");
         }
     };
 
@@ -1288,12 +1361,24 @@ const scrollToSection = (sectionId: string) => {
                                     <div
                                         key={sess.session_id}
                                         onClick={() => handleSwitchSession(sess.session_id)}
-                                        className={`p-3 rounded-xl cursor-pointer transition-all border ${
+                                        className={`p-3 rounded-xl cursor-pointer transition-all border group relative ${
                                             currentSessionId === sess.session_id
                                                 ? 'bg-amber-500/10 border-amber-500/50'
                                                 : 'bg-white/5 border-white/5 hover:border-white/10'
                                         }`}
                                     >
+                                        {!sess.is_root && (
+                                            <button
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleDeleteSession(sess.session_id, sess.session_name, sess.is_root);
+                                                }}
+                                                className="absolute right-2 top-2 w-5 h-5 rounded bg-red-500/0 hover:bg-red-500/20 text-red-400/0 group-hover:text-red-400 hover:text-red-400 transition-all flex items-center justify-center"
+                                                title="删除此平行宇宙"
+                                            >
+                                                <Trash2 className="w-3 h-3" />
+                                            </button>
+                                        )}
                                         <div className="font-medium truncate text-sm flex items-center gap-2 h-5">
                                             {sess.is_root && <BookOpen className="w-3 h-3 text-sky-400 shrink-0" />}
                                             <span className="truncate leading-none">{sess.session_name}</span>
@@ -1333,6 +1418,13 @@ const scrollToSection = (sectionId: string) => {
                                         key={bm.id}
                                         className="p-3 rounded-xl bg-white/5 border border-white/5 hover:border-sky-500/30 transition-all group relative"
                                     >
+                                        <button
+                                            onClick={() => handleDeleteBookmark(bm.id, bm.name)}
+                                            className="absolute right-2 top-2 w-5 h-5 rounded bg-red-500/0 hover:bg-red-500/20 text-red-400/0 group-hover:text-red-400 hover:text-red-400 transition-all flex items-center justify-center"
+                                            title="删除此书签"
+                                        >
+                                            <Trash2 className="w-3 h-3" />
+                                        </button>
                                         <div className="font-medium text-slate-200 text-xs mb-1 truncate pr-8">{bm.name}</div>
                                         <div className="text-[10px] text-slate-500 flex justify-between items-center">
                                             <span>{new Date(bm.created_at).toLocaleDateString()}</span>

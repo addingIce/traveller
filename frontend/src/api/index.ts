@@ -261,3 +261,22 @@ export const getChapters = async (novelId: string): Promise<ChapterInfo[]> => {
     const { data } = await apiClient.get(`/sessions/${novelId}/chapters`);
     return data;
 };
+
+export const deleteSession = async (sessionId: string): Promise<void> => {
+    await apiClient.delete(`/sessions/${sessionId}`);
+};
+
+export const deleteBookmark = async (sessionId: string, bookmarkId: string): Promise<void> => {
+    await apiClient.delete(`/sessions/${sessionId}/bookmarks/${bookmarkId}`);
+};
+
+export interface SessionMessage {
+    role: string;
+    content: string;
+    created_at?: string;
+}
+
+export const getSessionMessages = async (sessionId: string): Promise<SessionMessage[]> => {
+    const { data } = await apiClient.get(`/sessions/${sessionId}/messages`);
+    return data.messages || [];
+};

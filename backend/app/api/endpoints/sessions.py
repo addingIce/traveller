@@ -60,3 +60,37 @@ async def get_chapters(novel_id: str, request: Request):
         return [ChapterInfo(**c) for c in chapters]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/{session_id}/messages")
+async def get_session_messages(session_id: str, request: Request):
+    """获取 Session 的历史消息"""
+    service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
+    try:
+        messages = await service.get_session_messages(session_id)
+        return {"messages": messages}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_session(session_id: str, request: Request):
+    """删除平行宇宙（Session）及其关联数据"""
+    service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
+    try:
+        await service.delete_session(session_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/{session_id}/bookmarks/{bookmark_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_bookmark(session_id: str, bookmark_id: str, request: Request):
+    """删除书签"""
+    service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
+    try:
+        deleted = await service.delete_bookmark(session_id, bookmark_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Bookmark not found")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
