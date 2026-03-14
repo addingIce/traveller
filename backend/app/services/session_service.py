@@ -2,6 +2,7 @@ import uuid
 import time
 import re
 import os
+import asyncio
 import httpx
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -462,6 +463,9 @@ class SessionService:
                 print(f"[WARNING] Failed to delete Zep memory for {session_id}: {zep_err}")
                 # 不抛出异常，因为 Neo4j 已删除成功
 
+            # 5. 后台异步清理孤儿 Entity（不阻塞响应）
+            asyncio.create_task(self._cleanup_orphan_entities())
+
             return True
         except ValueError:
             raise
@@ -508,3 +512,34 @@ class SessionService:
         except Exception as e:
             print(f"[ERROR] Failed to get messages for session {session_id}: {e}")
             return []
+
+    async def _cleanup_orphan_entities(self) -> int:
+        """
+        清理孤儿 Entity 数据（group_id 没有对应 Session 的 Entity）
+        用于处理竞态条件：删除 session 时，后台实体提取任务可能还在进行
+        
+        Returns:
+            清理的 Entity 数量
+        """
+        try:
+            async with self.neo4j.session() as session:
+                result = await session.run(
+                    """
+                    // 找出所有不存在对应 Session 的 Entity（排除原始剧情线）
+                    MATCH (e:Entity)
+                    WHERE NOT e.group_id STARTS WITH 'novel_'
+                    AND NOT EXISTS { MATCH (s:Session {uuid: e.group_id}) }
+                    WITH e
+                    OPTIONAL MATCH (e)-[r]-()
+                    DELETE r, e
+                    RETURN count(e) as cleaned
+                    """
+                )
+                record = await result.single()
+                cleaned = record.get("cleaned", 0) if record else 0
+                if cleaned > 0:
+                    print(f"[INFO] Cleaned up {cleaned} orphan entities")
+                return cleaned
+        except Exception as e:
+            print(f"[ERROR] Failed to cleanup orphan entities: {e}")
+            return 0
