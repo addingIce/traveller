@@ -157,6 +157,18 @@ const getSessionId = () => {
 // Persisted session ID (supports cross-device resume via ?sid=xxx)
 const sessionId = getSessionId();
 
+interface ModalConfig {
+    show: boolean;
+    type: 'info' | 'success' | 'warning' | 'error';
+    title: string;
+    message: string;
+    confirmText?: string;
+    cancelText?: string;
+    onConfirm?: () => void;
+    onCancel?: () => void;
+    showCancel?: boolean;
+}
+
 const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'graph' | 'plot'>('plot');
     const [graphData, setGraphData] = useState<any>(null);
@@ -219,6 +231,42 @@ const App: React.FC = () => {
     const pendingFocusNodeIdRef = useRef<string | null>(null);
     const factsAbortControllerRef = useRef<AbortController | null>(null);
     const searchTokenRef = useRef<number>(0);
+
+    // Modal State
+    const [modalConfig, setModalConfig] = useState<ModalConfig>({
+        show: false,
+        type: 'info',
+        title: '',
+        message: '',
+        confirmText: '确定',
+        cancelText: '取消',
+        showCancel: false
+    });
+
+    const showAlert = (title: string, message: string, type: ModalConfig['type'] = 'info') => {
+        setModalConfig({
+            show: true,
+            type,
+            title,
+            message,
+            confirmText: '确定',
+            showCancel: false
+        });
+    };
+
+    const showConfirm = (title: string, message: string, onConfirm: () => void, type: ModalConfig['type'] = 'warning') => {
+        setModalConfig({
+            show: true,
+            type,
+            title,
+            message,
+            confirmText: '确定',
+            cancelText: '取消',
+            showCancel: true,
+            onConfirm,
+            onCancel: () => setModalConfig(prev => ({ ...prev, show: false }))
+        });
+    };
 
     // 当前小说是否就绪（只有 ready 状态才能进行剧情推演和创建平行宇宙）
     const currentNovel = novels.find(n => n.collection_name === currentCollection);
@@ -437,24 +485,22 @@ const handleApplyPreset = async (presetKey: string) => {
 };
 
 const handleRestartServices = async () => {
-    if (!confirm('确定要重启 Docker 服务吗？这将导致服务短暂中断。')) {
-        return;
-    }
-
-    setIsRestarting(true);
-    try {
-        const response = await restartServices();
-        if (response.success) {
-            alert('服务重启成功！配置已生效。');
-        } else {
-            alert('服务重启失败：' + response.message);
+    showConfirm('危险操作', '确定要重启 Docker 服务吗？这将导致服务短暂中断。', async () => {
+        setIsRestarting(true);
+        try {
+            const response = await restartServices();
+            if (response.success) {
+                showAlert('成功', '服务重启成功！配置已生效。', 'success');
+            } else {
+                showAlert('失败', '服务重启失败：' + response.message, 'error');
+            }
+        } catch (error) {
+            console.error("重启服务失败", error);
+            showAlert('错误', '重启服务时出错，请检查控制台日志。', 'error');
+        } finally {
+            setIsRestarting(false);
         }
-    } catch (error) {
-        console.error("重启服务失败", error);
-        alert('重启服务时出错，请检查控制台日志。');
-    } finally {
-        setIsRestarting(false);
-    }
+    });
 };
 
 const loadGraph = async (renderNow: boolean = true, sessionId?: string) => {
@@ -495,11 +541,11 @@ const scrollToSection = (sectionId: string) => {
     const handleFileUpload = async (file: File) => {
         // 验证文件
         if (!file.name.endsWith('.txt')) {
-            alert('仅支持 .txt 文本文件');
+            showAlert('格式错误', '仅支持 .txt 文本文件', 'error');
             return;
         }
         if (file.size > 10 * 1024 * 1024) {
-            alert('文件大小不能超过 10MB');
+            showAlert('文件过大', '文件大小不能超过 10MB', 'error');
             return;
         }
 
@@ -513,7 +559,7 @@ const scrollToSection = (sectionId: string) => {
         if (!selectedFile) return;
 
         if (!uploadTitle.trim()) {
-            alert('请输入小说标题');
+            showAlert('信息不全', '请输入小说标题', 'warning');
             return;
         }
 
@@ -542,11 +588,10 @@ const scrollToSection = (sectionId: string) => {
             // 同时也刷新小说列表（确保数据一致性）
             loadNovelsList();
             
-            // 重置状态
-            setSelectedFile(null);
             setUploadTitle('');
+            showAlert('上传成功', `小说《${uploadTitle}》已进入排队队列。`, 'success');
         } catch (error) {
-            alert('上传失败');
+            showAlert('上传失败', '服务器处理请求时出错', 'error');
             console.error(error);
         } finally {
             setIsUploading(false);
@@ -580,7 +625,7 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const handleDeleteNovel = async (collectionName: string) => {
-        if (confirm('确定要删除这部小说吗？')) {
+        showConfirm('删除确认', '确定要删除这部小说吗？此操作将清除所有关联的图谱和剧情数据。', async () => {
             try {
                 await deleteNovel(collectionName);
                 setNovels(prev => {
@@ -598,13 +643,14 @@ const scrollToSection = (sectionId: string) => {
                     setChapters([]);
                     setHistory([]);
                 }
+                showAlert('已删除', '小说档案已安全移除', 'success');
                 // 后台刷新以确保一致性
                 loadNovelsList();
             } catch (e) {
-                alert('删除失败');
+                showAlert('删除失败', '无法完成删除操作，请稍后重试', 'error');
                 console.error(e);
             }
-        }
+        });
     };
 
     const handleSelectNovel = (collectionName: string) => {
@@ -659,7 +705,7 @@ const scrollToSection = (sectionId: string) => {
     const handleCreateSession = async () => {
         if (!currentCollection || !newSessionName.trim()) return;
         if (!isNovelReady) {
-            alert("作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙");
+            showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
             return;
         }
         try {
@@ -672,7 +718,7 @@ const scrollToSection = (sectionId: string) => {
             setStartChapterId(null);
             setStartChapterTitle(null);
         } catch (e) {
-            alert("创建平行宇宙失败");
+            showAlert('创建失败', '无法初始化平行宇宙，请检查服务器连接。', 'error');
         }
     };
 
@@ -725,9 +771,9 @@ const scrollToSection = (sectionId: string) => {
             setShowBookmarkModal(false);
             setBookmarkName('');
             loadBookmarks(currentSessionId);
-            alert("书签已创建！");
+            showAlert('创建成功', '书签已保存至当前观测点', 'success');
         } catch (e) {
-            alert("创建书签失败");
+            showAlert('创建失败', '无法保存书签，请检查网络连接', 'error');
         }
     };
 
@@ -739,9 +785,9 @@ const scrollToSection = (sectionId: string) => {
             await loadSessions();
             setCurrentSessionId(newSession.session_id);
             setHistory([]); 
-            alert(`已从书签开启新的平行宇宙：${newSession.session_name}`);
+            showAlert('分支开启', `已成功从书签切入新的平行宇宙：${newSession.session_name}`, 'success');
         } catch (e) {
-            alert("开启平行宇宙分支失败");
+            showAlert('操作失败', '无法从该观测点开启分支', 'error');
         } finally {
             setIsSessionsLoading(false);
         }
@@ -749,13 +795,11 @@ const scrollToSection = (sectionId: string) => {
 
     const handleDeleteSession = async (sessionId: string, sessionName: string, isRoot: boolean) => {
         if (isRoot) {
-            alert("不能删除原始剧情线！");
+            showAlert('权限限制', '原始剧情线（根宇宙）是时空基准，不可删除。', 'warning');
             return;
         }
-        if (!confirm(`确定要删除平行宇宙「${sessionName}」吗？此操作不可撤销。`)) {
-            return;
-        }
-        try {
+        showConfirm('删除确认', `确定要销毁平行宇宙「${sessionName}」吗？此操作将永久抹除该轴的所有历史记录，不可撤销。`, async () => {
+            try {
             await deleteSession(sessionId);
             await loadSessions();
             // If deleted session was current, switch to root or first
@@ -770,24 +814,24 @@ const scrollToSection = (sectionId: string) => {
                     setCurrentSessionId('');
                 }
             }
-            alert(`平行宇宙「${sessionName}」已删除`);
+            showAlert('已销毁', `平行宇宙「${sessionName}」已被安全移除。`, 'success');
         } catch (e: any) {
-            alert(e.response?.data?.detail || "删除失败");
+            showAlert('删除失败', e.response?.data?.detail || "无法执行删除指令", 'error');
         }
+        });
     };
 
     const handleDeleteBookmark = async (bookmarkId: string, bookmarkName: string) => {
         if (!currentSessionId) return;
-        if (!confirm(`确定要删除书签「${bookmarkName}」吗？此操作不可撤销。`)) {
-            return;
-        }
-        try {
-            await deleteBookmark(currentSessionId, bookmarkId);
-            await loadBookmarks(currentSessionId);
-            alert(`书签「${bookmarkName}」已删除`);
-        } catch (e: any) {
-            alert(e.response?.data?.detail || "删除失败");
-        }
+        showConfirm('删除确认', `确定要移除书签「${bookmarkName}」吗？移除后将无法通过此点直接开启平行宇宙。`, async () => {
+            try {
+                await deleteBookmark(currentSessionId, bookmarkId);
+                await loadBookmarks(currentSessionId);
+                showAlert('已移除', `书签「${bookmarkName}」已被清理。`, 'success');
+            } catch (e: any) {
+                showAlert('删除失败', e.response?.data?.detail || "无法执行清理指令", 'error');
+            }
+        });
     };
 
     const handleUploadClick = () => {
@@ -1055,7 +1099,7 @@ const scrollToSection = (sectionId: string) => {
     const handleSendChat = async () => {
         if (!chatInput.trim() || isChatting || !currentCollection) return;
         if (!isNovelReady) {
-            alert("作品尚未处理完成，请等待状态变为「就绪」后再进行剧情推演");
+            showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再进行剧情推演", 'warning');
             return;
         }
 
@@ -1075,7 +1119,7 @@ const scrollToSection = (sectionId: string) => {
             }
         } catch (e) {
             console.error("互动失败", e);
-            alert("剧情推演失败。请确保您已启动Zep与FastAPI服务。");
+            showAlert('推演失败', '剧情推演遇到时空扰动。请检查 Zep 与 FastAPI 服务是否正常运行。', 'error');
         } finally {
             setIsChatting(false);
         }
@@ -1366,7 +1410,7 @@ const scrollToSection = (sectionId: string) => {
                             <button
                                 onClick={() => {
                                     if (!isNovelReady) {
-                                        alert("作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙");
+                                        showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
                                         return;
                                     }
                                     setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
@@ -2589,6 +2633,64 @@ const scrollToSection = (sectionId: string) => {
                                         </div>
                                     </div>
                                 </section>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modern Modal System */}
+            {modalConfig.show && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200">
+                    <div className="bg-slate-900/90 border border-white/10 rounded-3xl p-8 w-full max-w-md shadow-2xl animate-in zoom-in duration-300 backdrop-blur-xl relative overflow-hidden">
+                        {/* Status Accent Bar */}
+                        <div className={`absolute top-0 left-0 w-full h-1.5 ${
+                            modalConfig.type === 'success' ? 'bg-emerald-500' :
+                            modalConfig.type === 'error' ? 'bg-red-500' :
+                            modalConfig.type === 'warning' ? 'bg-amber-500' : 'bg-sky-500'
+                        }`} />
+                        
+                        <div className="flex flex-col items-center text-center">
+                            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-6 ${
+                                modalConfig.type === 'success' ? 'bg-emerald-500/10 text-emerald-400' :
+                                modalConfig.type === 'error' ? 'bg-red-500/10 text-red-400' :
+                                modalConfig.type === 'warning' ? 'bg-amber-500/10 text-amber-400' : 'bg-sky-500/10 text-sky-400'
+                            }`}>
+                                {modalConfig.type === 'success' && <CheckCircle className="w-8 h-8" />}
+                                {modalConfig.type === 'error' && <AlertCircle className="w-8 h-8" />}
+                                {modalConfig.type === 'warning' && <AlertCircle className="w-8 h-8" />}
+                                {modalConfig.type === 'info' && <Info className="w-8 h-8" />}
+                            </div>
+                            
+                            <h3 className="text-xl font-bold text-white mb-3">{modalConfig.title}</h3>
+                            <p className="text-slate-400 text-sm leading-relaxed mb-8">{modalConfig.message}</p>
+                            
+                            <div className="flex gap-3 w-full">
+                                {modalConfig.showCancel && (
+                                    <button
+                                        onClick={() => {
+                                            if (modalConfig.onCancel) modalConfig.onCancel();
+                                            setModalConfig(prev => ({ ...prev, show: false }));
+                                        }}
+                                        className="flex-1 px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-medium transition-all border border-white/5"
+                                    >
+                                        {modalConfig.cancelText || '取消'}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => {
+                                        if (modalConfig.onConfirm) modalConfig.onConfirm();
+                                        setModalConfig(prev => ({ ...prev, show: false }));
+                                    }}
+                                    className={`flex-1 px-6 py-3 rounded-xl font-bold text-white transition-all shadow-lg ${
+                                        modalConfig.type === 'success' ? 'bg-emerald-500 hover:bg-emerald-600 shadow-emerald-500/20' :
+                                        modalConfig.type === 'error' ? 'bg-red-500 hover:bg-red-600 shadow-red-500/20' :
+                                        modalConfig.type === 'warning' ? 'bg-amber-500 hover:bg-amber-600 shadow-amber-500/20' :
+                                        'bg-sky-500 hover:bg-sky-600 shadow-sky-500/20'
+                                    }`}
+                                >
+                                    {modalConfig.confirmText || '确定'}
+                                </button>
                             </div>
                         </div>
                     </div>
