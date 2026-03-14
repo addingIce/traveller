@@ -144,6 +144,21 @@ class SessionService:
             "checkpoint_id": checkpoint_id
         }
 
+    async def list_bookmarks(self, session_id: str) -> List[Dict[str, Any]]:
+        async with self.neo4j.session() as session:
+            query = """
+            MATCH (s:Session {uuid: $session_id})-[:HAS_BOOKMARK]->(b:Bookmark)
+            RETURN b.uuid as id, 
+                   b.name as name, 
+                   b.description as description, 
+                   b.created_at as created_at,
+                   b.checkpoint_id as checkpoint_id,
+                   $session_id as session_id
+            ORDER BY b.created_at DESC
+            """
+            result = await session.run(query, session_id=session_id)
+            return [dict(record) async for record in result]
+
     async def branch_from_bookmark(self, session_id: str, bookmark_id: str, new_name: Optional[str] = None) -> Dict[str, Any]:
         # 1. Get bookmark info
         async with self.neo4j.session() as session:

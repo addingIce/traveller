@@ -34,6 +34,15 @@ async def create_bookmark(session_id: str, req: BookmarkCreate, request: Request
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@router.get("/{session_id}/bookmarks", response_model=List[BookmarkInfo])
+async def list_bookmarks(session_id: str, request: Request):
+    service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)
+    try:
+        bookmarks = await service.list_bookmarks(session_id)
+        return [BookmarkInfo(**b) for b in bookmarks]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @router.post("/{session_id}/branch", response_model=SessionInfo)
 async def branch_session(session_id: str, req: BranchRequest, request: Request):
     service = SessionService(request.app.state.zep, request.app.state.neo4j_driver)

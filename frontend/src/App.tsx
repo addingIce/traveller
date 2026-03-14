@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -195,6 +195,8 @@ const App: React.FC = () => {
     const [isChaptersLoading, setIsChaptersLoading] = useState(false);
     const [showBookmarkModal, setShowBookmarkModal] = useState(false);
     const [bookmarkName, setBookmarkName] = useState('');
+    const [bookmarks, setBookmarks] = useState<any[]>([]);
+    const [isBookmarksLoading, setIsBookmarksLoading] = useState(false);
 
     // System Config State
     const [config, setConfig] = useState<SystemConfig | null>(null);
@@ -312,7 +314,7 @@ const App: React.FC = () => {
     // This keeps sidebar statistics in sync even when graph tab is not active.
     useEffect(() => {
         if (currentCollection) {
-            loadGraph(activeTab === 'graph');
+            loadGraph();
             loadSessions();
             loadChapters();
         }
@@ -637,8 +639,20 @@ const scrollToSection = (sectionId: string) => {
     const handleSwitchSession = (sid: string) => {
         setCurrentSessionId(sid);
         setHistory([]); // In a real app, we might want to reload history from Zep
-        // Reload graph to show session-specific context (if applicable in future)
-        loadGraph(activeTab === 'graph');
+        loadGraph();
+        loadBookmarks(sid);
+    };
+
+    const loadBookmarks = async (sid: string) => {
+        setIsBookmarksLoading(true);
+        try {
+            const data = await listBookmarks(sid);
+            setBookmarks(data);
+        } catch (e) {
+            console.error("Failed to load bookmarks", e);
+        } finally {
+            setIsBookmarksLoading(false);
+        }
     };
 
     const handleCreateBookmark = async () => {
@@ -647,9 +661,26 @@ const scrollToSection = (sectionId: string) => {
             await createBookmark(currentSessionId, bookmarkName.trim());
             setShowBookmarkModal(false);
             setBookmarkName('');
+            loadBookmarks(currentSessionId);
             alert("书签已创建！");
         } catch (e) {
             alert("创建书签失败");
+        }
+    };
+
+    const handleBranchFromBookmark = async (bookmarkId: string) => {
+        if (!currentSessionId) return;
+        try {
+            setIsSessionsLoading(true);
+            const newSession = await branchSession(currentSessionId, bookmarkId);
+            await loadSessions();
+            setCurrentSessionId(newSession.session_id);
+            setHistory([]); 
+            alert(`已从书签开启新的平行宇宙：${newSession.session_name}`);
+        } catch (e) {
+            alert("开启平行宇宙分支失败");
+        } finally {
+            setIsSessionsLoading(false);
         }
     };
 
@@ -1251,6 +1282,42 @@ const scrollToSection = (sectionId: string) => {
                                         <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
                                             <span>{sess.is_root ? '原始剧情线' : '玩家分支'}</span>
                                             <span>{sess.last_interaction_at ? new Date(sess.last_interaction_at).toLocaleDateString() : '尚未开始'}</span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+                    
+                    {/* Bookmark List (Story Snapshots) */}
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 flex-1 mt-4">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="text-sky-400 font-semibold flex items-center gap-2 text-sm">
+                                <Save className="w-4 h-4 shrink-0" />
+                                <span>剧情书签</span>
+                            </div>
+                            <span className="text-[10px] text-slate-500 uppercase font-mono">{bookmarks.length} Checkpoints</span>
+                        </div>
+                        <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1">
+                            {isBookmarksLoading ? (
+                                <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
+                            ) : bookmarks.length === 0 ? (
+                                <div className="text-center py-4 text-slate-500 text-xs">暂无书签</div>
+                            ) : (
+                                bookmarks.map((bm) => (
+                                    <div
+                                        key={bm.id}
+                                        className="p-3 rounded-xl bg-white/5 border border-white/5 hover:border-sky-500/30 transition-all group relative"
+                                    >
+                                        <div className="font-medium text-slate-200 text-xs mb-1 truncate pr-8">{bm.name}</div>
+                                        <div className="text-[10px] text-slate-500 flex justify-between items-center">
+                                            <span>{new Date(bm.created_at).toLocaleDateString()}</span>
+                                            <button 
+                                                onClick={() => handleBranchFromBookmark(bm.id)}
+                                                className="opacity-0 group-hover:opacity-100 px-2 py-0.5 bg-sky-500/20 hover:bg-sky-500 text-sky-400 hover:text-white rounded text-[9px] transition-all font-bold uppercase"
+                                            >
+                                                Branch 分支
+                                            </button>
                                         </div>
                                     </div>
                                 ))

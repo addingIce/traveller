@@ -243,6 +243,11 @@ export const createBookmark = async (sessionId: string, name: string, descriptio
     return data;
 };
 
+export const listBookmarks = async (sessionId: string): Promise<BookmarkInfo[]> => {
+    const { data } = await apiClient.get(`/sessions/${sessionId}/bookmarks`);
+    return data;
+};
+
 export const branchSession = async (sessionId: string, bookmarkId: string, newSessionName?: string): Promise<SessionInfo> => {
     const { data } = await apiClient.post(`/sessions/${sessionId}/branch`, {
         bookmark_id: bookmarkId,
