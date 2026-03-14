@@ -24,6 +24,122 @@ const getNovelCountLabel = (status: NovelStatus, count: number): string => {
     return `${count} 个实体`;
 };
 
+type AggregatedRelation = {
+    id: string;
+    label: string;
+    direction: string;
+    directionLabel: string;
+};
+
+type AggregatedEdgeDetail = {
+    id: string;
+    source: string;
+    target: string;
+    sourceLabel: string;
+    targetLabel: string;
+    count: number;
+    primaryLabel: string;
+    relations: AggregatedRelation[];
+};
+
+const getPrimaryRelationLabel = (relations: AggregatedRelation[]): string => {
+    if (relations.length === 0) return 'related';
+    const counts = new Map<string, number>();
+    const order: string[] = [];
+    for (const relation of relations) {
+        const label = relation.label || 'related';
+        if (!counts.has(label)) {
+            order.push(label);
+        }
+        counts.set(label, (counts.get(label) || 0) + 1);
+    }
+    let bestLabel = order[0];
+    let bestCount = counts.get(bestLabel) || 0;
+    for (const label of order) {
+        const currentCount = counts.get(label) || 0;
+        if (currentCount > bestCount) {
+            bestLabel = label;
+            bestCount = currentCount;
+        }
+    }
+    return bestLabel;
+};
+
+const prepareGraphRenderData = (raw: any): { nodes: any[]; edges: any[] } => {
+    const nodes = Array.isArray(raw?.nodes) ? raw.nodes : [];
+    const edges = Array.isArray(raw?.edges) ? raw.edges : [];
+    if (edges.length === 0) {
+        return { nodes, edges };
+    }
+
+    const nodeNameMap = new Map<string, string>();
+    for (const node of nodes) {
+        if (node?.id) {
+            nodeNameMap.set(node.id, String(node?.label || node.id));
+        }
+    }
+
+    const grouped = new Map<string, AggregatedEdgeDetail>();
+    for (let edgeIndex = 0; edgeIndex < edges.length; edgeIndex += 1) {
+        const edge = edges[edgeIndex];
+        if (!edge?.source || !edge?.target) continue;
+        const src = String(edge.source);
+        const tgt = String(edge.target);
+        const pairKey = [src, tgt].sort().join('<->');
+        const relation: AggregatedRelation = {
+            id: String(edge.id || `${pairKey}:${edgeIndex}`),
+            label: String(edge.label || 'related').trim() || 'related',
+            direction: `${src}->${tgt}`,
+            directionLabel: `${nodeNameMap.get(src) || src} -> ${nodeNameMap.get(tgt) || tgt}`,
+        };
+        if (!grouped.has(pairKey)) {
+            grouped.set(pairKey, {
+                id: `agg:${pairKey}`,
+                source: src,
+                target: tgt,
+                sourceLabel: nodeNameMap.get(src) || src,
+                targetLabel: nodeNameMap.get(tgt) || tgt,
+                count: 0,
+                primaryLabel: relation.label,
+                relations: [],
+            });
+        }
+        const bucket = grouped.get(pairKey)!;
+        bucket.relations.push(relation);
+        bucket.count += 1;
+    }
+
+    const groupedEdges = Array.from(grouped.values());
+    const labelDivider = groupedEdges.length > 120 ? 4 : groupedEdges.length > 80 ? 3 : groupedEdges.length > 45 ? 2 : 1;
+
+    const renderedEdges = groupedEdges.map((edgeDetail, index) => {
+        const primaryLabel = getPrimaryRelationLabel(edgeDetail.relations);
+        const displayLabel = edgeDetail.count > 1
+            ? `${primaryLabel} +${edgeDetail.count - 1}`
+            : primaryLabel;
+        const lineWidth = Math.min(1 + Math.log2(edgeDetail.count + 1), 4);
+        const shouldShowLabel = edgeDetail.count > 1 || labelDivider === 1 || index % labelDivider === 0;
+
+        return {
+            ...edgeDetail,
+            primaryLabel,
+            type: 'line',
+            label: shouldShowLabel ? displayLabel : '',
+            style: {
+                lineWidth,
+            },
+            labelCfg: shouldShowLabel
+                ? {
+                    autoRotate: true,
+                    refY: -6,
+                }
+                : undefined,
+        };
+    });
+
+    return { nodes, edges: renderedEdges };
+};
+
 const getSessionId = () => {
     const params = new URLSearchParams(window.location.search);
     const sidFromUrl = params.get("sid");
@@ -54,6 +170,8 @@ const App: React.FC = () => {
     const [searchResults, setSearchResults] = useState<{ nodes: any[], facts: string[] } | null>(null);
     const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
     const [nodeDetail, setNodeDetail] = useState<any | null>(null);
+    const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+    const [edgeDetail, setEdgeDetail] = useState<AggregatedEdgeDetail | null>(null);
 
     // Custom type for generic message history inside the app UI
     const [history, setHistory] = useState<(ChatResponse & { type: 'ai' } | { type: 'user', content: string })[]>([]);
@@ -194,14 +312,18 @@ const App: React.FC = () => {
     }, [activeTab]);
 
     const clearGraph = () => {
-    // 清理旧的 G6 图谱实例
-    if (graphRef.current) {
-        graphRef.current.destroy();
-        graphRef.current = null;
-    }
-    // 清空图谱数据
-    setGraphData(null);
-};
+        // 清理旧的 G6 图谱实例
+        if (graphRef.current) {
+            graphRef.current.destroy();
+            graphRef.current = null;
+        }
+        // 清空图谱与选择态
+        setGraphData(null);
+        setNodeDetail(null);
+        setSelectedNodeId(null);
+        setEdgeDetail(null);
+        setSelectedEdgeId(null);
+    };
 
 // Config Management Functions
 const loadConfig = async () => {
@@ -458,9 +580,11 @@ const scrollToSection = (sectionId: string) => {
 
         // Return early if no data
         if (data.nodes?.length === 0) return;
+        const renderData = prepareGraphRenderData(data);
 
         graphRef.current = new G6.Graph({
             container: graphContainer.current,
+            renderer: 'svg',
             width: graphContainer.current.scrollWidth,
             height: 600,
             fitView: true,
@@ -488,7 +612,10 @@ const scrollToSection = (sectionId: string) => {
                     lineWidth: 1,
                     endArrow: { path: G6.Arrow.triangle(4, 5, 0), fill: '#475569' },
                 },
-                labelCfg: { autoRotate: true, style: { fill: '#94a3b8', fontSize: 10 } },
+                labelCfg: {
+                    autoRotate: true,
+                    style: { fill: '#94a3b8', fontSize: 10, background: { fill: '#0b1220', padding: [2, 4], radius: 2 } },
+                },
             },
             modes: { default: ['drag-canvas', 'zoom-canvas', 'drag-node'] },
             nodeStateStyles: {
@@ -498,9 +625,15 @@ const scrollToSection = (sectionId: string) => {
                     fill: '#0ea5e9',
                 },
             },
+            edgeStateStyles: {
+                selected: {
+                    stroke: '#38bdf8',
+                    lineWidth: 3,
+                },
+            },
         });
 
-        graphRef.current.data(data);
+        graphRef.current.data(renderData);
         graphRef.current.render();
 
         // Add Listeners
@@ -509,9 +642,36 @@ const scrollToSection = (sectionId: string) => {
             handleNodeClick(id as string);
         });
 
-        graphRef.current.on('canvas:click', () => {
+        graphRef.current.on('edge:click', (e: any) => {
+            const model = e.item.getModel() as AggregatedEdgeDetail;
+            setSelectedEdgeId(model.id);
+            setEdgeDetail(model);
             setSelectedNodeId(null);
             setNodeDetail(null);
+            if (graphRef.current) {
+                graphRef.current.getNodes().forEach((n: any) => {
+                    graphRef.current.setItemState(n, 'selected', false);
+                });
+                graphRef.current.getEdges().forEach((edge: any) => {
+                    graphRef.current.setItemState(edge, 'selected', false);
+                });
+                graphRef.current.setItemState(e.item, 'selected', true);
+            }
+        });
+
+        graphRef.current.on('canvas:click', () => {
+            setSelectedNodeId(null);
+            setSelectedEdgeId(null);
+            setNodeDetail(null);
+            setEdgeDetail(null);
+            if (graphRef.current) {
+                graphRef.current.getNodes().forEach((n: any) => {
+                    graphRef.current.setItemState(n, 'selected', false);
+                });
+                graphRef.current.getEdges().forEach((edge: any) => {
+                    graphRef.current.setItemState(edge, 'selected', false);
+                });
+            }
         });
     };
 
@@ -525,6 +685,8 @@ const scrollToSection = (sectionId: string) => {
             setSearchResults(results);
             setNodeDetail(null); // 清除之前的节点详情，确保搜索结果列表能正常显示
             setSelectedNodeId(null); // 清除选中的节点
+            setEdgeDetail(null);
+            setSelectedEdgeId(null);
             setActiveTab('graph'); // 自动跳转到图谱页查看
         } catch (e) {
             console.error("搜索失败", e);
@@ -535,6 +697,8 @@ const scrollToSection = (sectionId: string) => {
 
     const handleNodeClick = async (id: string) => {
         setSelectedNodeId(id);
+        setSelectedEdgeId(null);
+        setEdgeDetail(null);
         const detail = await fetchNodeDetail(id);
         setNodeDetail(detail);
 
@@ -545,6 +709,9 @@ const scrollToSection = (sectionId: string) => {
                 // Clear all selected states
                 graphRef.current.getNodes().forEach((n: any) => {
                     graphRef.current.setItemState(n, 'selected', false);
+                });
+                graphRef.current.getEdges().forEach((edge: any) => {
+                    graphRef.current.setItemState(edge, 'selected', false);
                 });
                 graphRef.current.setItemState(node, 'selected', true);
             }
@@ -762,8 +929,34 @@ const scrollToSection = (sectionId: string) => {
                             </div>
                         )}
 
+                        {/* Edge Detail Dashboard */}
+                        {edgeDetail && !nodeDetail && (
+                            <div className="mt-4 p-4 bg-indigo-500/5 border border-indigo-500/20 rounded-xl animate-in fade-in zoom-in duration-300">
+                                <div className="flex justify-between items-start mb-2">
+                                    <span className="text-[10px] font-bold text-indigo-300 uppercase tracking-widest px-2 py-0.5 bg-indigo-400/10 rounded border border-indigo-300/20">
+                                        关系聚合
+                                    </span>
+                                    <Info className="w-3 h-3 text-indigo-300/60" />
+                                </div>
+                                <h3 className="text-sm font-semibold text-white mb-1">
+                                    {edgeDetail.sourceLabel} → {edgeDetail.targetLabel}
+                                </h3>
+                                <div className="text-[11px] text-slate-400 mb-2">
+                                    主关系: <span className="text-slate-200">{edgeDetail.primaryLabel}</span> · 共 {edgeDetail.count} 条
+                                    {selectedEdgeId ? <span className="ml-2 text-slate-500">#{selectedEdgeId.slice(-8)}</span> : null}
+                                </div>
+                                <div className="max-h-44 overflow-y-auto custom-scrollbar space-y-1.5 pr-1">
+                                    {edgeDetail.relations.map((rel, idx) => (
+                                        <div key={rel.id} className="text-[11px] text-slate-300 bg-black/20 border border-white/5 rounded-md px-2 py-1.5 leading-snug">
+                                            {idx + 1}. [{rel.directionLabel}] {rel.label}
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                         {/* Search Results List */}
-                        {searchResults && !nodeDetail && (
+                        {searchResults && !nodeDetail && !edgeDetail && (
                             <div className="mt-4 space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                                 {searchResults.nodes.length > 0 && (
                                     <div>
