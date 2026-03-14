@@ -239,7 +239,6 @@ class DirectorAI:
                 ],
                 temperature=0.7,
             )
-            )
             content = response.choices[0].message.content
             return self._robust_json_parse(content)
         except Exception as e:
