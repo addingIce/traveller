@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen } from 'lucide-react';
+import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
 import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
@@ -199,6 +199,7 @@ const App: React.FC = () => {
     const graphRef = useRef<any>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const searchPanelRef = useRef<HTMLDivElement>(null);
+    const pendingFocusNodeIdRef = useRef<string | null>(null);
 
     // Auto scroll to bottom
     useEffect(() => {
@@ -643,6 +644,19 @@ const scrollToSection = (sectionId: string) => {
         graphRef.current.data(renderData);
         graphRef.current.render();
 
+        if (pendingFocusNodeIdRef.current) {
+            const pendingId = pendingFocusNodeIdRef.current;
+            pendingFocusNodeIdRef.current = null;
+            const pendingNode = graphRef.current.findById(pendingId);
+            if (pendingNode) {
+                graphRef.current.focusItem(pendingNode, true, {
+                    easing: 'easeCubic',
+                    duration: 500,
+                });
+                handleNodeClick(pendingId);
+            }
+        }
+
         // Add Listeners
         graphRef.current.on('node:click', (e: any) => {
             const id = e.item.getModel().id;
@@ -728,14 +742,40 @@ const scrollToSection = (sectionId: string) => {
     };
 
     const locateNode = (id: string) => {
-        if (!graphRef.current) return;
+        setActiveTab('graph');
+        if (!graphRef.current) {
+            pendingFocusNodeIdRef.current = id;
+            return;
+        }
         const node = graphRef.current.findById(id);
-        if (node) {
-            graphRef.current.focusItem(node, true, {
-                easing: 'easeCubic',
-                duration: 500,
-            });
-            handleNodeClick(id);
+        if (!node) {
+            pendingFocusNodeIdRef.current = id;
+            return;
+        }
+        graphRef.current.focusItem(node, true, {
+            easing: 'easeCubic',
+            duration: 500,
+        });
+        handleNodeClick(id);
+    };
+
+    const fitGraphView = () => {
+        if (!graphRef.current) return;
+        graphRef.current.fitView(20);
+    };
+
+    const zoomGraph = (delta: number) => {
+        if (!graphRef.current) return;
+        const currentZoom = graphRef.current.getZoom();
+        const nextZoom = Math.max(0.2, Math.min(2.5, currentZoom + delta));
+        graphRef.current.zoomTo(nextZoom, { x: 0, y: 0 });
+    };
+
+    const resetGraphZoom = () => {
+        if (!graphRef.current) return;
+        graphRef.current.zoomTo(1, { x: 0, y: 0 });
+        if (typeof graphRef.current.fitCenter === 'function') {
+            graphRef.current.fitCenter();
         }
     };
 
@@ -1052,6 +1092,36 @@ const scrollToSection = (sectionId: string) => {
 
                         {/* Visualizer Body */}
                         <div className="relative bg-black/20 flex-1 overflow-hidden" style={{ display: activeTab === 'graph' ? 'block' : 'none' }}>
+                            <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm">
+                                <button
+                                    onClick={fitGraphView}
+                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
+                                    title="图谱居中（最优尺寸）"
+                                >
+                                    <LocateFixed className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => zoomGraph(0.15)}
+                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
+                                    title="放大"
+                                >
+                                    <ZoomIn className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={() => zoomGraph(-0.15)}
+                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
+                                    title="缩小"
+                                >
+                                    <ZoomOut className="w-4 h-4" />
+                                </button>
+                                <button
+                                    onClick={resetGraphZoom}
+                                    className="px-2 py-1 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
+                                    title="1:1"
+                                >
+                                    1:1
+                                </button>
+                            </div>
                             {isGraphLoading && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-500 backdrop-blur-md bg-black/40">
                                     <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-indigo-400" />
