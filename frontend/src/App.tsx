@@ -379,20 +379,50 @@ const App: React.FC = () => {
         }
     }, [currentCollection]);
 
-    // Load bookmarks whenever currentSessionId changes
+    // Load entries (graph, bookmarks, messages) whenever currentSessionId changes
     useEffect(() => {
         if (currentSessionId) {
             loadBookmarks(currentSessionId);
+            loadGraph(true, currentSessionId);
+            loadMessages(currentSessionId);
+        } else {
+            setHistory([]);
+            setBookmarks([]);
         }
     }, [currentSessionId]);
+
+    const loadMessages = async (sid: string) => {
+        if (!sid) return;
+        try {
+            const messages = await getSessionMessages(sid);
+            const historyItems: (ChatResponse & { type: 'ai' } | { type: 'user', content: string })[] = [];
+            
+            for (const msg of messages) {
+                if (msg.role === 'user') {
+                    historyItems.push({ type: 'user', content: msg.content });
+                } else if (msg.role === 'assistant') {
+                    historyItems.push({
+                        type: 'ai',
+                        story_text: msg.content,
+                        user_intent_summary: { action: undefined, dialogue: undefined, thought: undefined, intensity: 3, metadata: {} },
+                        world_impact: { world_state_changed: false },
+                        ui_hints: []
+                    });
+                }
+            }
+            setHistory(historyItems);
+        } catch (e) {
+            console.error("Failed to load session history", e);
+        }
+    };
 
     // Clear graph data when currentSessionId changes (force reload on next graph tab switch)
     useEffect(() => {
         setGraphData(null);
-        if (currentCollection && activeTab === 'graph') {
-            loadGraph(true, currentSessionId || undefined);
+        if (currentCollection && activeTab === 'graph' && currentSessionId) {
+            loadGraph(true, currentSessionId);
         }
-    }, [currentSessionId]);
+    }, [currentSessionId, activeTab]);
 
     // Handle Tab Switch & Graph Load
     useEffect(() => {
@@ -659,6 +689,7 @@ const scrollToSection = (sectionId: string) => {
         setCurrentSessionId(''); // Reset session when switching novel
         setSessions([]);
         setChapters([]);
+        setHistory([]); // Immediately clear history to prevent flickering
         clearGraph();
     };
 
@@ -724,32 +755,7 @@ const scrollToSection = (sectionId: string) => {
 
     const handleSwitchSession = async (sid: string) => {
         setCurrentSessionId(sid);
-        setHistory([]);
-        loadGraph(true, sid);
-        loadBookmarks(sid);
-        
-        // 加载历史消息
-        try {
-            const messages = await getSessionMessages(sid);
-            const historyItems: (ChatResponse & { type: 'ai' } | { type: 'user', content: string })[] = [];
-            
-            for (const msg of messages) {
-                if (msg.role === 'user') {
-                    historyItems.push({ type: 'user', content: msg.content });
-                } else if (msg.role === 'assistant') {
-                    historyItems.push({
-                        type: 'ai',
-                        story_text: msg.content,
-                        user_intent_summary: { action: undefined, dialogue: undefined, thought: undefined, intensity: 3, metadata: {} },
-                        world_impact: { world_state_changed: false },
-                        ui_hints: []
-                    });
-                }
-            }
-            setHistory(historyItems);
-        } catch (e) {
-            console.error("Failed to load session history", e);
-        }
+        // Effects handled by useEffect[currentSessionId]
     };
 
     const loadBookmarks = async (sid: string) => {
