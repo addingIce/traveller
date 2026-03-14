@@ -435,7 +435,24 @@ class SessionService:
                 )
                 print(f"[INFO] Deleted session {session_id} from Neo4j")
 
-            # 3. 删除 Zep memory
+            # 3. 删除 Graphiti Entity（group_id = session_id）
+            async with self.neo4j.session() as session:
+                entity_result = await session.run(
+                    """
+                    MATCH (e:Entity {group_id: $sid})
+                    WITH e
+                    OPTIONAL MATCH (e)-[r]-()
+                    DELETE r
+                    DELETE e
+                    RETURN count(e) as deleted_entities
+                    """,
+                    sid=session_id
+                )
+                entity_record = await entity_result.single()
+                deleted_count = entity_record.get("deleted_entities", 0) if entity_record else 0
+                print(f"[INFO] Deleted {deleted_count} entities for session {session_id}")
+
+            # 4. 删除 Zep memory
             try:
                 await self.zep.memory.delete_memory(session_id)
                 print(f"[INFO] Deleted session {session_id} from Zep")
