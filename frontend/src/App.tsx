@@ -220,6 +220,10 @@ const App: React.FC = () => {
     const factsAbortControllerRef = useRef<AbortController | null>(null);
     const searchTokenRef = useRef<number>(0);
 
+    // 当前小说是否就绪（只有 ready 状态才能进行剧情推演和创建平行宇宙）
+    const currentNovel = novels.find(n => n.collection_name === currentCollection);
+    const isNovelReady = currentNovel?.status === 'ready';
+
     // Auto scroll to bottom
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -643,6 +647,10 @@ const scrollToSection = (sectionId: string) => {
 
     const handleCreateSession = async () => {
         if (!currentCollection || !newSessionName.trim()) return;
+        if (!isNovelReady) {
+            alert("作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙");
+            return;
+        }
         try {
             const newSess = await createSession(currentCollection, sessionId, newSessionName.trim(), startChapterId || undefined);
             setSessions(prev => [newSess, ...prev]);
@@ -1035,6 +1043,10 @@ const scrollToSection = (sectionId: string) => {
 
     const handleSendChat = async () => {
         if (!chatInput.trim() || isChatting || !currentCollection) return;
+        if (!isNovelReady) {
+            alert("作品尚未处理完成，请等待状态变为「就绪」后再进行剧情推演");
+            return;
+        }
 
         const userMessage = chatInput.trim();
         setHistory(prev => [...prev, { type: 'user', content: userMessage }]);
@@ -1342,11 +1354,20 @@ const scrollToSection = (sectionId: string) => {
                             </div>
                             <button
                                 onClick={() => {
+                                    if (!isNovelReady) {
+                                        alert("作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙");
+                                        return;
+                                    }
                                     setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
                                     setShowNewSessionModal(true);
                                 }}
-                                className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 transition-all flex items-center justify-center border border-amber-500/20"
-                                title="开启新的平行宇宙"
+                                disabled={!isNovelReady}
+                                className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center border ${
+                                    isNovelReady 
+                                        ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20'
+                                        : 'bg-slate-700/50 text-slate-500 border-slate-700 cursor-not-allowed'
+                                }`}
+                                title={isNovelReady ? "开启新的平行宇宙" : "作品未就绪，无法创建平行宇宙"}
                             >
                                 <Plus className="w-4 h-4" />
                             </button>
@@ -1712,14 +1733,18 @@ const scrollToSection = (sectionId: string) => {
                                         type="text"
                                         value={chatInput}
                                         onChange={(e) => setChatInput(e.target.value)}
-                                        disabled={isChatting}
-                                        placeholder="执行动作 / 说出对白 / 心中暗想..."
-                                        className="flex-1 bg-black/40 border border-white/10 rounded-full px-6 py-4 text-white focus:outline-none focus:border-sky-500 transition-colors focus:ring-1 focus:ring-sky-500 shadow-inner"
+                                        disabled={isChatting || !isNovelReady}
+                                        placeholder={isNovelReady ? "执行动作 / 说出对白 / 心中暗想..." : "作品尚未就绪，无法进行剧情推演..."}
+                                        className={`flex-1 border rounded-full px-6 py-4 text-white focus:outline-none transition-colors shadow-inner ${
+                                            isNovelReady 
+                                                ? 'bg-black/40 border-white/10 focus:border-sky-500 focus:ring-1 focus:ring-sky-500'
+                                                : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
+                                        }`}
                                     />
                                     <button
-                                        disabled={isChatting || !chatInput.trim()}
+                                        disabled={isChatting || !chatInput.trim() || !isNovelReady}
                                         type="submit"
-                                        className="absolute right-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white rounded-full transition-all flex items-center gap-2 disabled:opacity-50 shadow-lg shadow-sky-500/20 font-bold"
+                                        className="absolute right-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white rounded-full transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-sky-500/20 font-bold"
                                     >
                                         推进 <Send className="w-4 h-4 ml-1" />
                                     </button>
