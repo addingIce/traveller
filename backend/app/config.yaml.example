@@ -1,8 +1,8 @@
 api:
-  embedding_api_key: sk-576e9b72d1c94041abbde994a614fd58
+  embedding_api_key: YOUR_EMBEDDING_API_KEY
   embedding_base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
   embedding_model: text-embedding-v4
-  llm_api_key: sk-c264868eb9bee420aa14c3c376c32121
+  llm_api_key: YOUR_LLM_API_KEY
   llm_base_url: https://apis.iflow.cn/v1
   llm_model: deepseek-v3
   model_director: deepseek-v3
