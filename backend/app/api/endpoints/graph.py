@@ -237,32 +237,55 @@ def _compose_graph(facts: List[str], extracted: Dict[str, Any]) -> Dict[str, Any
     return {"nodes": nodes, "edges": edges}
 
 @router.get("/{collection_name}", response_model=GraphResponse)
-async def get_knowledge_graph(collection_name: str, request: Request, mode: str = "auto"):
+async def get_knowledge_graph(
+    collection_name: str, 
+    request: Request, 
+    mode: str = "auto",
+    session_id: Optional[str] = None
+):
     """
     获取指定小说的知识图谱 (节点和关系边缘)
+    
+    参数:
+    - collection_name: 小说标识（原始剧情线的 group_id）
+    - mode: 查询模式
+    - session_id: 当前选中的 session_id。如果是平行宇宙（UUID格式），会同时显示原始剧情线+平行宇宙的图谱
     """
     # 检查 collection_name 是否已经以 novel_ 开头
     if collection_name.startswith("novel_"):
-        session_id = collection_name
+        novel_group_id = collection_name
     else:
-        session_id = f"novel_{collection_name}"
+        novel_group_id = f"novel_{collection_name}"
+    
+    # 确定要查询的 group_id 列表
+    # 如果传入了 session_id 且不是原始剧情线（不以 "novel_" 开头），则同时查询两个 group_id
+    if session_id and not session_id.startswith("novel_"):
+        # 平行宇宙：同时查询原始剧情线和平行宇宙的实体
+        group_ids = [novel_group_id, session_id]
+        print(f"[INFO] Parallel universe mode: querying both {novel_group_id} and {session_id}")
+    else:
+        # 原始剧情线或未传入 session_id：只查询原始剧情线
+        group_ids = [novel_group_id]
+    
     try:
         # 0. 尝试从 Neo4j 直接拉取已持久化的实体和关系
         driver = getattr(request.app.state, "neo4j_driver", None)
         if driver:
             async with driver.session() as session:
-                # 获取实体节点
+                # 获取实体节点（支持多个 group_id）
                 node_query = """
-                MATCH (n:Entity {group_id: $group_id})
+                MATCH (n:Entity)
+                WHERE n.group_id IN $group_ids
                 OPTIONAL MATCH (n)-[r]-()
                 RETURN
                     n.uuid as uuid,
                     n.name as name,
                     n.summary as summary,
                     labels(n) as labels,
-                    count(r) as rel_count
+                    count(r) as rel_count,
+                    n.group_id as group_id
                 """
-                node_result = await session.run(node_query, group_id=session_id)
+                node_result = await session.run(node_query, group_ids=group_ids)
                 nodes = []
                 async for record in node_result:
                     nodes.append({
@@ -271,14 +294,16 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
                         "type": record["labels"][0] if record["labels"] else "concept",
                         "summary": record["summary"] or "",
                         "rel_count": int(record["rel_count"] or 0),
+                        "group_id": record["group_id"],
                     })
                 
-                # 获取关系边
+                # 获取关系边（支持多个 group_id）
                 edge_query = """
-                MATCH (n:Entity {group_id: $group_id})-[r:RELATES_TO]->(m:Entity {group_id: $group_id}) 
+                MATCH (n:Entity)-[r:RELATES_TO]->(m:Entity)
+                WHERE n.group_id IN $group_ids AND m.group_id IN $group_ids
                 RETURN r.uuid as uuid, n.uuid as source, m.uuid as target, r.fact as fact, r.name as name
                 """
-                edge_result = await session.run(edge_query, group_id=session_id)
+                edge_result = await session.run(edge_query, group_ids=group_ids)
                 edges = []
                 async for record in edge_result:
                     edges.append({
@@ -293,10 +318,10 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
                     if deduped["duplicate_hits"] > 0:
                         print(
                             f"[WARNING] Duplicate entity names detected in graph payload: "
-                            f"group={session_id}, duplicates={deduped['duplicate_hits']}"
+                            f"groups={group_ids}, duplicates={deduped['duplicate_hits']}"
                         )
                     print(
-                        f"Graph retrieved from Neo4j for {session_id}: "
+                        f"Graph retrieved from Neo4j for {group_ids}: "
                         f"{len(deduped['nodes'])} nodes, {len(deduped['edges'])} edges"
                     )
                     return {"nodes": deduped["nodes"], "edges": deduped["edges"]}
@@ -308,7 +333,7 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
             
         # 如果 Neo4j 为空，且手动指定了 facts 模式，则走 Facts 路径（M0 保留逻辑）
         if mode == "facts":
-            memory = await client.memory.get(session_id)
+            memory = await client.memory.get(novel_group_id)
             facts = [f.fact for f in (memory.relevant_facts or [])]
             return {"nodes": _build_fact_nodes(facts), "edges": []}
 

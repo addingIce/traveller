@@ -223,6 +223,9 @@ const App: React.FC = () => {
     // 当前小说是否就绪（只有 ready 状态才能进行剧情推演和创建平行宇宙）
     const currentNovel = novels.find(n => n.collection_name === currentCollection);
     const isNovelReady = currentNovel?.status === 'ready';
+    
+    // 当前选中的 session 是否为原始剧情线（原始剧情线禁止推进剧情）
+    const isCurrentSessionRoot = sessions.find(s => s.session_id === currentSessionId)?.is_root ?? false;
 
     // Auto scroll to bottom
     useEffect(() => {
@@ -332,6 +335,14 @@ const App: React.FC = () => {
     useEffect(() => {
         if (currentSessionId) {
             loadBookmarks(currentSessionId);
+        }
+    }, [currentSessionId]);
+
+    // Clear graph data when currentSessionId changes (force reload on next graph tab switch)
+    useEffect(() => {
+        setGraphData(null);
+        if (currentCollection && activeTab === 'graph') {
+            loadGraph(true, currentSessionId || undefined);
         }
     }, [currentSessionId]);
 
@@ -446,14 +457,14 @@ const handleRestartServices = async () => {
     }
 };
 
-const loadGraph = async (renderNow: boolean = true) => {
+const loadGraph = async (renderNow: boolean = true, sessionId?: string) => {
     if (!currentCollection) {
         console.log("No collection selected, skipping graph load");
         return;
     }
     setIsGraphLoading(true);
     try {
-        const data = await fetchKnowledgeGraph(currentCollection);
+        const data = await fetchKnowledgeGraph(currentCollection, sessionId || currentSessionId || undefined);
         setGraphData(data);
         if (renderNow && activeTab === 'graph') renderGraph(data);
     } catch (e) {
@@ -668,7 +679,7 @@ const scrollToSection = (sectionId: string) => {
     const handleSwitchSession = async (sid: string) => {
         setCurrentSessionId(sid);
         setHistory([]);
-        loadGraph();
+        loadGraph(true, sid);
         loadBookmarks(sid);
         
         // 加载历史消息
@@ -1733,16 +1744,22 @@ const scrollToSection = (sectionId: string) => {
                                         type="text"
                                         value={chatInput}
                                         onChange={(e) => setChatInput(e.target.value)}
-                                        disabled={isChatting || !isNovelReady}
-                                        placeholder={isNovelReady ? "执行动作 / 说出对白 / 心中暗想..." : "作品尚未就绪，无法进行剧情推演..."}
+                                        disabled={isChatting || !isNovelReady || isCurrentSessionRoot}
+                                        placeholder={
+                                            isCurrentSessionRoot 
+                                                ? "原始剧情线不可编辑，请创建平行宇宙进行剧情推演..."
+                                                : isNovelReady 
+                                                    ? "执行动作 / 说出对白 / 心中暗想..." 
+                                                    : "作品尚未就绪，无法进行剧情推演..."
+                                        }
                                         className={`flex-1 border rounded-full px-6 py-4 text-white focus:outline-none transition-colors shadow-inner ${
-                                            isNovelReady 
+                                            isNovelReady && !isCurrentSessionRoot
                                                 ? 'bg-black/40 border-white/10 focus:border-sky-500 focus:ring-1 focus:ring-sky-500'
                                                 : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
                                         }`}
                                     />
                                     <button
-                                        disabled={isChatting || !chatInput.trim() || !isNovelReady}
+                                        disabled={isChatting || !chatInput.trim() || !isNovelReady || isCurrentSessionRoot}
                                         type="submit"
                                         className="absolute right-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white rounded-full transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-sky-500/20 font-bold"
                                     >

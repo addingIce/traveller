@@ -59,8 +59,9 @@ export interface ChapterInfo {
     order: number;
 }
 
-export const fetchKnowledgeGraph = async (collectionName: string) => {
-    const { data } = await apiClient.get(`/graph/${collectionName}`);
+export const fetchKnowledgeGraph = async (collectionName: string, sessionId?: string) => {
+    const params = sessionId ? { session_id: sessionId } : {};
+    const { data } = await apiClient.get(`/graph/${collectionName}`, { params });
     return data;
 };
 
