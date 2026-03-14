@@ -75,13 +75,16 @@ class SessionService:
             if start_chapter_id:
                 metadata["start_chapter_id"] = start_chapter_id
 
-            from zep_python import Memory
-            await self.zep.memory.add_memory(
+            # Create session with metadata first
+            await self.zep.memory.add_session(
+                session_id=session_id,
+                user_id=user_id,
+                metadata=metadata
+            )
+            # Add initial message
+            await self.zep.memory.add(
                 session_id, 
-                Memory(
-                    messages=[Message(role="system", content="INIT")],
-                    metadata=metadata
-                )
+                messages=[Message(role="system", role_type="system", content="INIT")]
             )
         except Exception as e:
             print(f"[DEBUG] Session {session_id} Zep initialization failed: {e}")
@@ -208,9 +211,8 @@ class SessionService:
                 break
         
         if messages_to_copy:
-            # Use add_memory for cloning
-            from zep_python import Memory
-            await self.zep.memory.add_memory(new_session_id, Memory(messages=messages_to_copy))
+            # Add messages to the new session
+            await self.zep.memory.add(new_session_id, messages=messages_to_copy)
 
         # 4. Clone bookmarks in Neo4j
         async with self.neo4j.session() as session:
@@ -454,7 +456,7 @@ class SessionService:
 
             # 4. 删除 Zep memory
             try:
-                await self.zep.memory.delete_memory(session_id)
+                await self.zep.memory.delete(session_id)
                 print(f"[INFO] Deleted session {session_id} from Zep")
             except Exception as zep_err:
                 print(f"[WARNING] Failed to delete Zep memory for {session_id}: {zep_err}")
