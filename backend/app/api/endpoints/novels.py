@@ -66,6 +66,7 @@ from app.services.novel_service import (
     smart_chunk_content, 
     monitor_entity_extraction, 
     process_novel_task, 
+    deduplicate_entities_in_collection,
     get_entity_count, 
     check_zep_messages, 
     observe_entity_growth
@@ -604,6 +605,16 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                     )
                     
                     if is_stable and final_count > 0:
+                        try:
+                            dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                            if dedup_stats.get("removed_nodes", 0) > 0:
+                                print(
+                                    f"[INFO] {title}: Deduplicated entities "
+                                    f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
+                                )
+                        except Exception as dedup_error:
+                            print(f"[WARNING] {title}: Deduplication failed during recovery: {dedup_error}")
+
                         # 实体稳定，标记为ready
                         print(f"[INFO] {title}: 实体提取完成 ({final_count}个实体)")
                         async with neo4j_driver.session() as update_session:

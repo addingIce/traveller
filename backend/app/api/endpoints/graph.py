@@ -1,6 +1,7 @@
 import json
 import os
 import time
+import unicodedata
 from fastapi import APIRouter, HTTPException, Request
 from openai import AsyncOpenAI
 from pydantic import BaseModel
@@ -46,6 +47,97 @@ def _build_fact_nodes(facts: List[str]) -> List[Dict[str, Any]]:
 
 def _slugify(name: str) -> str:
     return "".join(ch for ch in name.lower().strip().replace(" ", "_") if ch.isalnum() or ch in "_:-")
+
+
+def _normalize_entity_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKC", name or "")
+    return normalized.strip().lower()
+
+
+def _is_better_graph_node(candidate: Dict[str, Any], current: Dict[str, Any]) -> bool:
+    candidate_score = (
+        int(candidate.get("rel_count", 0)),
+        len((candidate.get("summary") or "").strip()),
+    )
+    current_score = (
+        int(current.get("rel_count", 0)),
+        len((current.get("summary") or "").strip()),
+    )
+    return candidate_score > current_score
+
+
+def _dedupe_graph_payload(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, Any]:
+    winners_by_name: Dict[str, Dict[str, Any]] = {}
+    uuid_alias: Dict[str, str] = {}
+    passthrough_nodes: List[Dict[str, Any]] = []
+    duplicate_hits = 0
+
+    for node in nodes:
+        key = _normalize_entity_name(node.get("label", ""))
+        if not key:
+            uuid_alias[node["id"]] = node["id"]
+            passthrough_nodes.append(node)
+            continue
+        current = winners_by_name.get(key)
+        if current is None:
+            winners_by_name[key] = node
+            uuid_alias[node["id"]] = node["id"]
+            continue
+        duplicate_hits += 1
+        if _is_better_graph_node(node, current):
+            uuid_alias[current["id"]] = node["id"]
+            winners_by_name[key] = node
+            uuid_alias[node["id"]] = node["id"]
+        else:
+            uuid_alias[node["id"]] = current["id"]
+
+    deduped_nodes = [
+        {"id": node["id"], "label": node["label"], "type": node["type"]}
+        for node in winners_by_name.values()
+    ]
+    deduped_nodes.extend(
+        [{"id": node["id"], "label": node["label"], "type": node["type"]} for node in passthrough_nodes]
+    )
+    deduped_edges: List[Dict[str, Any]] = []
+    edge_seen: set[tuple[str, str, str]] = set()
+    for edge in edges:
+        source = uuid_alias.get(edge["source"], edge["source"])
+        target = uuid_alias.get(edge["target"], edge["target"])
+        if source == target:
+            continue
+        label = edge.get("label") or "related"
+        edge_key = (source, target, label)
+        if edge_key in edge_seen:
+            continue
+        edge_seen.add(edge_key)
+        deduped_edges.append(
+            {
+                "id": edge["id"],
+                "source": source,
+                "target": target,
+                "label": label,
+            }
+        )
+
+    return {
+        "nodes": deduped_nodes,
+        "edges": deduped_edges,
+        "duplicate_hits": duplicate_hits,
+    }
+
+
+def _dedupe_search_nodes(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    by_name: Dict[str, Dict[str, Any]] = {}
+    passthrough: List[Dict[str, Any]] = []
+    for node in nodes:
+        key = _normalize_entity_name(node.get("label", ""))
+        if not key:
+            passthrough.append(node)
+            continue
+        if key in by_name:
+            continue
+        by_name[key] = node
+    return list(by_name.values()) + passthrough
 
 async def _extract_graph_from_facts(facts: List[str]) -> Dict[str, Any]:
     if not facts or not OPENAI_API_KEY:
@@ -154,14 +246,25 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
         if driver:
             async with driver.session() as session:
                 # 获取实体节点
-                node_query = "MATCH (n:Entity {group_id: $group_id}) RETURN n.uuid as uuid, n.name as name, labels(n) as labels"
+                node_query = """
+                MATCH (n:Entity {group_id: $group_id})
+                OPTIONAL MATCH (n)-[r]-()
+                RETURN
+                    n.uuid as uuid,
+                    n.name as name,
+                    n.summary as summary,
+                    labels(n) as labels,
+                    count(r) as rel_count
+                """
                 node_result = await session.run(node_query, group_id=session_id)
                 nodes = []
                 async for record in node_result:
                     nodes.append({
                         "id": record["uuid"],
                         "label": record["name"],
-                        "type": record["labels"][0] if record["labels"] else "concept"
+                        "type": record["labels"][0] if record["labels"] else "concept",
+                        "summary": record["summary"] or "",
+                        "rel_count": int(record["rel_count"] or 0),
                     })
                 
                 # 获取关系边
@@ -180,8 +283,17 @@ async def get_knowledge_graph(collection_name: str, request: Request, mode: str 
                     })
                 
                 if nodes:
-                    print(f"Graph retrieved from Neo4j for {session_id}: {len(nodes)} nodes, {len(edges)} edges")
-                    return {"nodes": nodes, "edges": edges}
+                    deduped = _dedupe_graph_payload(nodes, edges)
+                    if deduped["duplicate_hits"] > 0:
+                        print(
+                            f"[WARNING] Duplicate entity names detected in graph payload: "
+                            f"group={session_id}, duplicates={deduped['duplicate_hits']}"
+                        )
+                    print(
+                        f"Graph retrieved from Neo4j for {session_id}: "
+                        f"{len(deduped['nodes'])} nodes, {len(deduped['edges'])} edges"
+                    )
+                    return {"nodes": deduped["nodes"], "edges": deduped["edges"]}
 
         # 1. 如果 Neo4j 没数据，或者模式要求使用 facts 提取，备选走 Zep Facts 路径
         client = getattr(request.app.state, "zep", None)
@@ -236,6 +348,13 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                     "label": record["name"],
                     "type": record["labels"][0] if record["labels"] else "concept"
                 })
+            deduped_nodes = _dedupe_search_nodes(results["nodes"])
+            if len(deduped_nodes) != len(results["nodes"]):
+                print(
+                    f"[WARNING] Duplicate entity names detected in search payload: "
+                    f"group={session_id}, before={len(results['nodes'])}, after={len(deduped_nodes)}"
+                )
+            results["nodes"] = deduped_nodes
         
         # 2. 语义搜索 (通过 Zep 检索 Facts)
         client = request.app.state.zep

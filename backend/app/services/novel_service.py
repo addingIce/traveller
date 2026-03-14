@@ -1,7 +1,9 @@
 import re
 import time
 import asyncio
+import unicodedata
 from datetime import datetime
+from typing import Any
 from zep_python.client import AsyncZep
 from zep_python import Message
 
@@ -49,6 +51,177 @@ def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 5
         chunks.append(current_chunk)
     
     return chunks
+
+
+def _normalize_entity_name(name: str) -> str:
+    normalized = unicodedata.normalize("NFKC", name or "")
+    return normalized.strip().lower()
+
+
+def _split_summary_sentences(summary: str) -> list[str]:
+    if not summary:
+        return []
+    raw_parts = re.split(r"[。！？.!?\n]+", summary)
+    return [part.strip() for part in raw_parts if part and part.strip()]
+
+
+def _merge_entity_summaries(summaries: list[str], max_length: int = 1200) -> str:
+    ordered_summaries = sorted((s.strip() for s in summaries if s and s.strip()), key=len, reverse=True)
+    seen: set[str] = set()
+    merged_parts: list[str] = []
+    for summary in ordered_summaries:
+        for sentence in _split_summary_sentences(summary):
+            if sentence in seen:
+                continue
+            seen.add(sentence)
+            merged_parts.append(sentence)
+    merged = "。".join(merged_parts)
+    if merged and not merged.endswith("。"):
+        merged += "。"
+    return merged[:max_length]
+
+
+def _select_master_entity(entities: list[dict[str, Any]]) -> dict[str, Any]:
+    def _score(item: dict[str, Any]) -> tuple[int, int, int, str]:
+        rel_score = int(item.get("rel_score") or 0)
+        attr_score = int(item.get("attr_score") or 0)
+        has_summary = 1 if (item.get("summary") or "").strip() else 0
+        created_at = item.get("created_at") or ""
+        # rel/attr/summary 越高越优先；created_at 越早越优先
+        return (-rel_score, -attr_score, -has_summary, created_at)
+
+    return sorted(entities, key=_score)[0]
+
+
+async def deduplicate_entities_in_collection(
+    collection_name: str,
+    neo4j_driver,
+    summary_max_length: int = 1200
+) -> dict[str, int]:
+    if not neo4j_driver:
+        return {"merged_groups": 0, "removed_nodes": 0}
+
+    async with neo4j_driver.session() as session:
+        query = """
+        MATCH (e:Entity {group_id: $group_id})
+        RETURN
+            e.uuid AS uuid,
+            COALESCE(e.name, '') AS name,
+            COALESCE(e.summary, '') AS summary,
+            COALESCE(e.created_at, '') AS created_at,
+            size([(e)-[:RELATES_TO]-() | 1]) + size([(e)-[:MENTIONS]-() | 1]) AS rel_score,
+            CASE WHEN e.attributes IS NULL THEN 0 ELSE size(keys(e.attributes)) END AS attr_score
+        """
+        result = await session.run(query, group_id=collection_name)
+        entities = [record async for record in result]
+
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for record in entities:
+            normalized_name = _normalize_entity_name(record["name"])
+            if not normalized_name:
+                continue
+            groups.setdefault(normalized_name, []).append(
+                {
+                    "uuid": record["uuid"],
+                    "name": record["name"],
+                    "summary": record["summary"] or "",
+                    "created_at": record["created_at"] or "",
+                    "rel_score": int(record["rel_score"] or 0),
+                    "attr_score": int(record["attr_score"] or 0),
+                }
+            )
+
+        merged_groups = 0
+        removed_nodes = 0
+        for normalized_name, bucket in groups.items():
+            if len(bucket) <= 1:
+                continue
+
+            merged_groups += 1
+            master = _select_master_entity(bucket)
+            merged_summary = _merge_entity_summaries(
+                [item.get("summary", "") for item in bucket],
+                max_length=summary_max_length,
+            )
+            print(
+                f"[WARNING] Duplicate entities detected: group={collection_name}, "
+                f"name={normalized_name}, count={len(bucket)}, master={master['uuid']}"
+            )
+
+            await session.run(
+                """
+                MATCH (master:Entity {uuid: $master_uuid})
+                SET master.summary = $summary
+                """,
+                master_uuid=master["uuid"],
+                summary=merged_summary,
+            )
+
+            for duplicate in bucket:
+                duplicate_uuid = duplicate["uuid"]
+                if duplicate_uuid == master["uuid"]:
+                    continue
+
+                await session.run(
+                    """
+                    MATCH (dup:Entity {uuid: $dup_uuid}), (master:Entity {uuid: $master_uuid})
+                    MATCH (dup)-[r:RELATES_TO]->(t)
+                    WHERE t.uuid <> $master_uuid
+                    MERGE (master)-[nr:RELATES_TO {
+                        fact: COALESCE(r.fact, ''),
+                        name: COALESCE(r.name, '')
+                    }]->(t)
+                    ON CREATE SET nr.uuid = COALESCE(r.uuid, randomUUID())
+                    """,
+                    dup_uuid=duplicate_uuid,
+                    master_uuid=master["uuid"],
+                )
+
+                await session.run(
+                    """
+                    MATCH (dup:Entity {uuid: $dup_uuid}), (master:Entity {uuid: $master_uuid})
+                    MATCH (s)-[r:RELATES_TO]->(dup)
+                    WHERE s.uuid <> $master_uuid
+                    MERGE (s)-[nr:RELATES_TO {
+                        fact: COALESCE(r.fact, ''),
+                        name: COALESCE(r.name, '')
+                    }]->(master)
+                    ON CREATE SET nr.uuid = COALESCE(r.uuid, randomUUID())
+                    """,
+                    dup_uuid=duplicate_uuid,
+                    master_uuid=master["uuid"],
+                )
+
+                await session.run(
+                    """
+                    MATCH (dup:Entity {uuid: $dup_uuid}), (master:Entity {uuid: $master_uuid})
+                    MATCH (x)-[:MENTIONS]->(dup)
+                    MERGE (x)-[:MENTIONS]->(master)
+                    """,
+                    dup_uuid=duplicate_uuid,
+                    master_uuid=master["uuid"],
+                )
+
+                await session.run(
+                    """
+                    MATCH (dup:Entity {uuid: $dup_uuid}), (master:Entity {uuid: $master_uuid})
+                    MATCH (dup)-[:MENTIONS]->(x)
+                    MERGE (master)-[:MENTIONS]->(x)
+                    """,
+                    dup_uuid=duplicate_uuid,
+                    master_uuid=master["uuid"],
+                )
+
+                await session.run(
+                    """
+                    MATCH (dup:Entity {uuid: $dup_uuid})
+                    DETACH DELETE dup
+                    """,
+                    dup_uuid=duplicate_uuid,
+                )
+                removed_nodes += 1
+
+        return {"merged_groups": merged_groups, "removed_nodes": removed_nodes}
 
 async def monitor_entity_extraction(
     collection_name: str,
@@ -118,6 +291,16 @@ async def monitor_entity_extraction(
                         print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
                         
                         if stable_count >= stable_threshold:
+                            try:
+                                dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                                if dedup_stats.get("removed_nodes", 0) > 0:
+                                    print(
+                                        f"[INFO] {collection_name}: Deduplicated entities "
+                                        f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
+                                    )
+                            except Exception as dedup_error:
+                                print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
+
                             status_store[collection_name]["status"] = "ready"
                             try:
                                 async with neo4j_driver.session() as session:
@@ -140,6 +323,16 @@ async def monitor_entity_extraction(
                     print(f"[DEBUG] {collection_name}: Monitoring ({entity_count} entities, {time_elapsed}s elapsed)")
         
         if last_entity_count > 0:
+            try:
+                dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                if dedup_stats.get("removed_nodes", 0) > 0:
+                    print(
+                        f"[INFO] {collection_name}: Deduplicated entities "
+                        f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
+                    )
+            except Exception as dedup_error:
+                print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
+
             status_store[collection_name]["status"] = "ready"
             try:
                 async with neo4j_driver.session() as session:
