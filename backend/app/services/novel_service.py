@@ -2,6 +2,8 @@ import re
 import time
 import asyncio
 import unicodedata
+import os
+import httpx
 from datetime import datetime
 from typing import Any
 from zep_python.client import AsyncZep
@@ -424,6 +426,8 @@ async def process_novel_task(
             raise RuntimeError("Zep 会话初始化失败（服务可能暂时不可用或网络不稳定）")
         
         batch_size = 2
+        graphiti_url = os.getenv("GRAPHITI_API_URL", "http://localhost:8003")
+        
         for i in range(0, len(chunks), batch_size):
             batch = chunks[i:i + batch_size]
             messages = [
@@ -448,6 +452,36 @@ async def process_novel_task(
                     if retries == 0:
                         raise e
                     await asyncio.sleep(2)
+            
+            # 同时直接调用 Graphiti API，使用正确的 group_id
+            try:
+                import uuid as uuid_module
+                graphiti_messages = []
+                for chunk_idx, chunk in enumerate(batch):
+                    graphiti_messages.append({
+                        "uuid": str(uuid_module.uuid4()),
+                        "name": f"novel_chunk_{i + chunk_idx}",
+                        "content": chunk,
+                        "role": "讲述者",
+                        "role_type": "user",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "source_description": f"Novel ingestion: {novel_title}"
+                    })
+                
+                async with httpx.AsyncClient(timeout=30.0) as http_client:
+                    graphiti_resp = await http_client.post(
+                        f"{graphiti_url}/messages",
+                        json={
+                            "group_id": collection_name,  # 关键：使用正确的 group_id
+                            "messages": graphiti_messages
+                        }
+                    )
+                    if graphiti_resp.status_code in [200, 202]:
+                        print(f"[DEBUG] Graphiti batch {i // batch_size + 1} submitted successfully")
+                    else:
+                        print(f"[WARNING] Graphiti batch {i // batch_size + 1} failed: {graphiti_resp.status_code}")
+            except Exception as graphiti_err:
+                print(f"[WARNING] Failed to call Graphiti directly: {graphiti_err}")
             
             processed = min(i + batch_size, total_chunks)
             status_store[collection_name]["chunks_processed"] = processed
