@@ -1223,19 +1223,17 @@ const scrollToSection = (sectionId: string) => {
                             >
                                 <BookOpen className="w-4 h-4" />
                                 <span>作品档案库</span>
+                                <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">{novels.length}</span>
                                 <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isNovelListExpanded ? 'rotate-0' : '-rotate-90'}`} />
                             </h2>
-                            <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded-full">{novels.length}</span>
-                                <button
-                                    onClick={handleUploadClick}
-                                    disabled={isUploading}
-                                    className="p-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                    title="上传新小说"
-                                >
-                                    {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-                                </button>
-                            </div>
+                            <button
+                                onClick={handleUploadClick}
+                                disabled={isUploading}
+                                className="p-2 rounded-lg bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="上传新小说"
+                            >
+                                {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+                            </button>
                         </div>
                         <input
                             ref={fileInputRef}
@@ -1340,12 +1338,18 @@ const scrollToSection = (sectionId: string) => {
                         </div>
                     )}
 
+                    {/* Search Panel with smooth height transition */}
                     <div 
-                        ref={searchPanelRef} 
-                        className={`bg-slate-800/50 border border-white/10 rounded-2xl p-4 backdrop-blur-sm transition-all duration-300 overflow-hidden ${
-                            activeTab === 'graph' ? 'opacity-100 max-h-[600px]' : 'opacity-0 max-h-0 p-0 border-0'
+                        className={`transition-all duration-300 ease-in-out ${
+                            activeTab === 'graph' ? 'opacity-100 mt-6' : 'opacity-0 !mt-0 pointer-events-none'
                         }`}
                     >
+                        <div className="grid transition-all duration-300 ease-in-out overflow-hidden" style={{ gridTemplateRows: activeTab === 'graph' ? '1fr' : '0fr' }}>
+                            <div className="overflow-hidden">
+                                <div 
+                                    ref={searchPanelRef} 
+                                    className="bg-slate-800/50 border border-white/10 rounded-2xl p-4 backdrop-blur-sm"
+                                >
                         <h2 className="text-sky-400 font-semibold mb-3 flex items-center gap-2 text-sm">
                             <Search className="w-3 h-3" /> 搜索世界实体
                         </h2>
@@ -1454,8 +1458,10 @@ const scrollToSection = (sectionId: string) => {
                                 )}
                             </div>
                         )}
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                    )}
 
                     {/* Parallel Universes (Sessions) Selector */}
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col">
@@ -1466,30 +1472,28 @@ const scrollToSection = (sectionId: string) => {
                             >
                                 <History className="w-4 h-4 shrink-0" />
                                 <span>平行宇宙</span>
+                                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">{sessions.length}</span>
                                 <ChevronDown className={`w-4 h-4 transition-transform duration-200 ${isSessionsExpanded ? 'rotate-0' : '-rotate-90'}`} />
                             </div>
-                            <div className="flex items-center gap-2">
-                                <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-full">{sessions.length}</span>
-                                <button
-                                    onClick={() => {
-                                        if (!isNovelReady) {
-                                            showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
-                                            return;
-                                        }
-                                        setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
-                                        setShowNewSessionModal(true);
-                                    }}
-                                    disabled={!isNovelReady}
-                                    className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center border ${
-                                        isNovelReady 
-                                            ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20'
-                                            : 'bg-slate-700/50 text-slate-500 border-slate-700 cursor-not-allowed'
-                                    }`}
-                                    title={isNovelReady ? "开启新的平行宇宙" : "作品未就绪，无法创建平行宇宙"}
-                                >
-                                    <Plus className="w-4 h-4" />
-                                </button>
-                            </div>
+                            <button
+                                onClick={() => {
+                                    if (!isNovelReady) {
+                                        showAlert('未就绪', "作品尚未处理完成，请等待状态变为「就绪」后再创建平行宇宙", 'warning');
+                                        return;
+                                    }
+                                    setNewSessionName(`新的支线 ${new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}`);
+                                    setShowNewSessionModal(true);
+                                }}
+                                disabled={!isNovelReady}
+                                className={`w-8 h-8 rounded-lg transition-all flex items-center justify-center border ${
+                                    isNovelReady 
+                                        ? 'bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 border-amber-500/20'
+                                        : 'bg-slate-700/50 text-slate-500 border-slate-700 cursor-not-allowed'
+                                }`}
+                                title={isNovelReady ? "开启新的平行宇宙" : "作品未就绪，无法创建平行宇宙"}
+                            >
+                                <Plus className="w-4 h-4" />
+                            </button>
                         </div>
                         <div className="space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
                             {isSessionsLoading ? (
