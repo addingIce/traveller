@@ -16,6 +16,8 @@ export interface IntentSummary {
     action?: string;
     dialogue?: string;
     thought?: string;
+    intensity?: number;
+    metadata?: Record<string, any>;
 }
 
 export interface WorldImpact {

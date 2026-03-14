@@ -11,6 +11,8 @@ class IntentSummary(BaseModel):
     action: Optional[str] = None
     dialogue: Optional[str] = None
     thought: Optional[str] = None
+    intensity: Optional[int] = 3
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
 
 class WorldImpact(BaseModel):
     world_state_changed: bool

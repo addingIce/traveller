@@ -39,9 +39,11 @@ async def chat_interact(req: ChatRequest, request: Request):
         parser = ActionParser(aclient, MODEL_PARSER)
         assembler = ContextAssembler(zep, neo4j)
         director = DirectorAI(aclient, MODEL_DIRECTOR)
+        from app.services.director_service import SafetyGuard
 
         # 2. 解析意图 (Action Parsing)
-        intent = await parser.parse_intent(req.message)
+        sanitized_message = SafetyGuard.sanitize(req.message)
+        intent = await parser.parse_intent(sanitized_message)
         
         # 3. 装配上下文 (Context Assembly)
         context = await assembler.assemble(req.session_id, req.novel_id)

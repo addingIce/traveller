@@ -12,18 +12,21 @@ class ActionParser:
         self.model = model
 
     async def parse_intent(self, user_input: str) -> Dict[str, Any]:
-        """解析玩家意图：区分动作、对话和心理"""
-        # 如果是快捷指令格式如 /act 砍向敌人
+        """精细化解析玩家意图：区分动作、对话和心理，并提取关键词"""
+        # 1. 快捷指令处理
         if user_input.startswith("/act "):
-            return {"action": user_input[5:].strip(), "dialogue": None, "thought": None}
+            return {"action": user_input[5:].strip(), "dialogue": None, "thought": None, "metadata": {"manual": True}}
         if user_input.startswith("/say "):
-            return {"action": None, "dialogue": user_input[5:].strip(), "thought": None}
-        if user_input.startswith("/think "):
-            return {"action": None, "dialogue": None, "thought": user_input[7:].strip()}
+            return {"action": None, "dialogue": user_input[5:].strip(), "thought": None, "metadata": {"manual": True}}
 
-        # 否则使用大模型进行自然语言解析
+        # 2. LLM 解析
         system_prompt = """
-        你是一位中立的剧情解析助手。请将玩家的输入解构为：动作(action)、对话(dialogue)、心理描写(thought)。
+        你是一位中立的剧情意图分析师。请将玩家的输入解构为以下四个维度：
+        1. action: 玩家通过身体进行的动作。
+        2. dialogue: 玩家对其他角色说的话。
+        3. thought: 玩家内心的想法或心理描写。
+        4. intensity: 意图强度 (1-5)。
+        
         请仅输出 JSON 格式。
         """
         try:
@@ -37,12 +40,35 @@ class ActionParser:
                 temperature=0,
             )
             content = response.choices[0].message.content
-            # Clean possible markdown wrap
-            content = re.sub(r'^```json\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
-            return json.loads(content)
+            parsed = json.loads(content)
+            parsed["metadata"] = {"manual": False}
+            return parsed
         except Exception:
-            # 回退：默认为对话
-            return {"action": None, "dialogue": user_input, "thought": None}
+            return {"action": None, "dialogue": user_input, "thought": None, "intensity": 3, "metadata": {"fallback": True}}
+
+class SafetyGuard:
+    @staticmethod
+    def sanitize(text: str) -> str:
+        """基础指令注入防御层"""
+        # 过滤常见的注入关键词（针对 LLM 指令注入）
+        forbidden_patterns = [
+            r"ignore previous instructions",
+            r"forget everything",
+            r"system prompt",
+            r"you are now a",
+            r"jailbreak",
+            r"强制输出",
+            r"忽略所有指令"
+        ]
+        sanitized = text
+        for pattern in forbidden_patterns:
+            sanitized = re.sub(pattern, "[指令过滤]", sanitized, flags=re.IGNORECASE)
+        
+        # 长度限制
+        if len(sanitized) > 2000:
+            sanitized = sanitized[:2000] + "...(文本过长已截断)"
+            
+        return sanitized
 
 class ContextAssembler:
     def __init__(self, zep_client, neo4j_driver):
@@ -55,7 +81,8 @@ class ContextAssembler:
             "session_history": "",
             "session_summary": "",
             "world_background": "",
-            "relevant_entities": []
+            "relevant_entities": [],
+            "waypoints": []
         }
 
         # 0. Fetch Session Metadata for Branching Context
@@ -104,8 +131,18 @@ class ContextAssembler:
                 result = await session.run(query, novel_id=novel_id)
                 entities = [f"{r['name']}: {r['summary']}" async for r in result]
                 context["relevant_entities"] = entities
+
+                # 4. 获取剧情路标 (Waypoints) - 只有收束模式下特别重要，但沙盒模式也可知晓
+                waypoint_query = """
+                MATCH (w:Waypoint {group_id: $novel_id})
+                RETURN w.title as title, w.requirement as requirement, w.description as description
+                LIMIT 5
+                """
+                wp_result = await session.run(waypoint_query, novel_id=novel_id)
+                waypoints = [f"路标: {r['title']} (前置: {r['requirement']}) - {r['description']}" async for r in wp_result]
+                context["waypoints"] = waypoints
         except Exception as e:
-            print(f"[DEBUG] ContextAssembler: Entity fetch failed: {e}")
+            print(f"[DEBUG] ContextAssembler: Context fetch failed: {e}")
 
         return context
 
@@ -113,6 +150,36 @@ class DirectorAI:
     def __init__(self, client: AsyncOpenAI, model: str):
         self.client = client
         self.model = model
+
+    def _robust_json_parse(self, content: str) -> Dict[str, Any]:
+        """鲁棒性 JSON 解析层：处理 Markdown 包裹、额外文本等风险"""
+        # 1. 预处理：去除首尾空白和常见的 Markdown 包装
+        clean_text = content.strip()
+        clean_text = re.sub(r'^```json\s*', '', clean_text)
+        clean_text = re.sub(r'\s*```$', '', clean_text)
+        
+        try:
+            # 2. 尝试标准解析
+            return json.loads(clean_text)
+        except json.JSONDecodeError:
+            try:
+                # 3. 弹性解析：正则提取最外层大括号内容
+                match = re.search(r'({.*})', clean_text, re.DOTALL)
+                if match:
+                    return json.loads(match.group(1))
+            except Exception:
+                pass
+            
+            # 4. 结构闭环：降级为纯文本叙事模式，防止系统崩溃
+            print(f"[DEFENSE] Robust parsing failed. Falling back. Content: {clean_text[:100]}...")
+            return {
+                "story_text": clean_text,
+                "world_impact": {
+                    "world_state_changed": False,
+                    "reason": "AI输出格式非标准，系统自动执行文本降级处理"
+                },
+                "ui_hints": ["format_mismatch_fallback"]
+            }
 
     async def generate(self, context: Dict[str, Any], intent: Dict[str, Any], mode: str = "SANDBOX") -> Dict[str, Any]:
         """导演推演逻辑"""
@@ -124,25 +191,31 @@ class DirectorAI:
             mode_instruction = "收束模式：在符合逻辑的前提下，尽可能引导玩家接触主线剧情或设定的关键路标。"
 
         system_prompt = f"""
-        你是一位顶级小说家兼AI剧情推演导演（Director AI）。
+        # Role: 穿越者引擎导演 (Director AI)
         
-        [当前模式]: {mode_instruction}
+        ## Mode: {mode_instruction}
         
-        [小说宏观背景]: {context['world_background']}
+        ## Context:
+        - 世界背景: {context['world_background']}
+        - 起始点: {context.get('start_chapter_id', '开篇')}
+        - 关键实体: {"; ".join(context['relevant_entities'])}
+        - 剧情路标 (Waypoints): {"; ".join(context['waypoints'])}
+        - 历史摘要: {context['session_summary']}
         
-        {f"[平行宇宙起始章节]: {context.get('start_chapter_id', '小说开篇')}" if context.get('start_chapter_id') else ""}
-        
-        [已知实体设定]:
-        {chr(10).join(context['relevant_entities'])}
-        
-        [本时间线历史摘录]: {context['session_summary']}
-        
-        请根据上下文和玩家意图进行推演。
-        输出 JSON 格式：
+        ## Joint Output Protocol (JOP) - JSON Schema:
+        请严格按以下 JSON 结构输出，不要包含任何 Markdown 格式以外的解释文字：
         {{
-            "story_text": "剧情文字描述",
-            "world_impact": {{ "world_state_changed": bool, "reason": "原因" }},
-            "ui_hints": []
+            "story_text": "高质量剧情叙述。在收束模式下，应尽可能引导玩家接近路标。",
+            "world_impact": {{ 
+                "world_state_changed": true/false, 
+                "reason": "简述世界逻辑或NPC态度的变化" 
+            }},
+            "user_intent_summary": {{
+                "action": "解析出的玩家肢体动作",
+                "dialogue": "解析出的玩家发言内容",
+                "thought": "解析出的玩家内心独白"
+            }},
+            "ui_hints": ["需前端高亮的关键词", "建议操作指令"]
         }}
         """
 
@@ -166,14 +239,13 @@ class DirectorAI:
                 ],
                 temperature=0.7,
             )
+            )
             content = response.choices[0].message.content
-            # Clean possible markdown wrap
-            content = re.sub(r'^```json\s*|\s*```$', '', content.strip(), flags=re.MULTILINE)
-            return json.loads(content)
+            return self._robust_json_parse(content)
         except Exception as e:
             print(f"[ERROR] DirectorAI generation failed: {e}")
             return {
-                "story_text": "（推演中出现了一点波折，请稍后再试……）",
-                "world_impact": {"world_state_changed": False, "reason": "系统推演异常"},
-                "ui_hints": []
+                "story_text": "（时空发生扰动，剧情推演暂时中断，请重新尝试引导……）",
+                "world_impact": {"world_state_changed": False, "reason": str(e)},
+                "ui_hints": ["system_error"]
             }

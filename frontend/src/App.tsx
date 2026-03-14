@@ -740,7 +740,7 @@ const scrollToSection = (sectionId: string) => {
                     historyItems.push({
                         type: 'ai',
                         story_text: msg.content,
-                        user_intent_summary: { action: undefined, dialogue: undefined, thought: undefined },
+                        user_intent_summary: { action: undefined, dialogue: undefined, thought: undefined, intensity: 3, metadata: {} },
                         world_impact: { world_state_changed: false },
                         ui_hints: []
                     });
