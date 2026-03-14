@@ -126,6 +126,7 @@ async def upload_novel(
     
     # 获取状态存储
     status_store = getattr(request.app.state, "processing_tasks", {})
+    graph_cache = getattr(request.app.state, "graph_cache", {})
     
     # 获取 Neo4j 驱动
     neo4j_driver = getattr(request.app.state, "neo4j_driver", None)
@@ -389,6 +390,13 @@ async def delete_novel(collection_name: str, request: Request):
         if driver:
             try:
                 async with driver.session() as driver_session:
+                    # 删除 Session 节点（M2 平行宇宙）
+                    session_query = """
+                    MATCH (n:Novel {collection_name: $collection_name})-[:HAS_SESSION]->(s:Session)
+                    DETACH DELETE s
+                    """
+                    await driver_session.run(session_query, collection_name=collection_name)
+
                     # 第一步：删除所有 Entity 节点的关系（包括 outgoing 和 incoming）
                     # 使用 DETACH DELETE 删除关系但不删除目标节点
                     edge_query = """
@@ -465,6 +473,14 @@ async def delete_novel(collection_name: str, request: Request):
         # 3. 从状态存储中移除
         if collection_name in status_store:
             del status_store[collection_name]
+        # 4. 清理图谱缓存
+        try:
+            if graph_cache and isinstance(graph_cache, dict):
+                items = graph_cache.get("items", {})
+                if isinstance(items, dict):
+                    items.pop(collection_name, None)
+        except Exception:
+            pass
         
         # 构建响应消息
         message_parts = []

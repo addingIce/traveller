@@ -1,6 +1,7 @@
 import os
 import json
 import re
+from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
@@ -166,6 +167,19 @@ async def chat_interact(req: ChatRequest, request: Request):
         # 将导演 AI 生成的剧情也作为一条 Message 推回 Zep，方便下一轮记忆
         ai_message = Message(role="assistant", role_type="assistant", content=ai_data.get("story_text", "……"))
         await client.memory.add(req.session_id, messages=[ai_message])
+        
+        # --- 7. 更新 Neo4j 中的 Session 最后交互时间 ---
+        neo4j_driver = request.app.state.neo4j_driver
+        if neo4j_driver:
+            try:
+                async with neo4j_driver.session() as session:
+                    update_query = """
+                    MATCH (s:Session {uuid: $session_id})
+                    SET s.last_interaction_at = $now
+                    """
+                    await session.run(update_query, session_id=req.session_id, now=datetime.utcnow().isoformat())
+            except Exception as ne:
+                print(f"Failed to update session timestamp: {ne}")
         
         # 如果世界状态发生变动，标记图谱缓存为脏
         if ai_data.get("world_impact", {}).get("world_state_changed"):

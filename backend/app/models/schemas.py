@@ -1,0 +1,40 @@
+from pydantic import BaseModel, Field
+from typing import List, Optional, Dict, Any
+from datetime import datetime
+
+class SessionCreate(BaseModel):
+    novel_id: str
+    user_id: str
+    session_name: Optional[str] = "新的冒险"
+
+class SessionInfo(BaseModel):
+    session_id: str
+    novel_id: str
+    user_id: str
+    session_name: str
+    created_at: str
+    last_interaction_at: Optional[str] = None
+    parent_session_id: Optional[str] = None
+    is_root: bool = False
+
+class BookmarkCreate(BaseModel):
+    name: str
+    description: Optional[str] = None
+
+class BookmarkInfo(BaseModel):
+    id: str
+    session_id: str
+    name: str
+    description: Optional[str] = None
+    created_at: str
+    checkpoint_id: str # Zep message UUID or sequence
+
+class BranchRequest(BaseModel):
+    bookmark_id: str # From which bookmark to branch
+    new_session_name: Optional[str] = None
+
+class ChapterInfo(BaseModel):
+    id: str
+    title: str
+    content_preview: str
+    order: int

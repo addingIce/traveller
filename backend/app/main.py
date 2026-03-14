@@ -12,6 +12,12 @@ load_dotenv()
 ZEP_API_URL = os.getenv("ZEP_API_URL", "http://localhost:8000")
 ZEP_API_KEY = os.getenv("ZEP_API_KEY", "")
 
+# 禁用网络代理以确保本地连接成功
+os.environ["NO_PROXY"] = "localhost,127.0.0.1"
+if "http_proxy" in os.environ: del os.environ["http_proxy"]
+if "https_proxy" in os.environ: del os.environ["https_proxy"]
+if "all_proxy" in os.environ: del os.environ["all_proxy"]
+
 # OpenAI 兼容接口配置
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -28,13 +34,12 @@ NEO4J_PASSWORD = os.getenv("NEO4J_PASSWORD", "password123")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时执行
-    print(f"正在连接 Zep 服务：{ZEP_API_URL}...")
     try:
         # 创建 AsyncZep 客户端，增加超时配置
         app.state.zep = AsyncZep(
             base_url=ZEP_API_URL, 
             api_key=ZEP_API_KEY,
-            # 增加超时时间（默认可能太短）
+            # 增加超时时间
             timeout=300.0  # 5分钟超时
         )
         # 简易图谱缓存：按 collection 维护数据、脏标记和更新时间

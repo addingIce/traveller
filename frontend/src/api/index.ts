@@ -25,6 +25,34 @@ export interface ChatResponse {
     ui_hints: string[];
 }
 
+// Session & Timeline Types
+export interface SessionInfo {
+    session_id: string;
+    novel_id: string;
+    user_id: string;
+    session_name: string;
+    created_at: string;
+    last_interaction_at: string | null;
+    parent_session_id: string | null;
+    is_root: boolean;
+}
+
+export interface BookmarkInfo {
+    id: string;
+    session_id: string;
+    name: string;
+    description: string | null;
+    created_at: string;
+    checkpoint_id: string;
+}
+
+export interface ChapterInfo {
+    id: string;
+    title: string;
+    content_preview: string;
+    order: number;
+}
+
 export const fetchKnowledgeGraph = async (collectionName: string) => {
     const { data } = await apiClient.get(`/graph/${collectionName}`);
     return data;
@@ -176,5 +204,42 @@ export const restartServices = async (): Promise<{ success: boolean; message: st
 
 export const getServicesStatus = async (): Promise<{ success: boolean; status: string }> => {
     const { data } = await apiClient.get('/config/services/status');
+    return data;
+};
+
+// --- Session & Timeline API ---
+
+export const createSession = async (novelId: string, userId: string, sessionName?: string): Promise<SessionInfo> => {
+    const { data } = await apiClient.post('/sessions', {
+        novel_id: novelId,
+        user_id: userId,
+        session_name: sessionName,
+    });
+    return data;
+};
+
+export const listSessions = async (novelId: string): Promise<SessionInfo[]> => {
+    const { data } = await apiClient.get(`/sessions/${novelId}`);
+    return data;
+};
+
+export const createBookmark = async (sessionId: string, name: string, description?: string): Promise<BookmarkInfo> => {
+    const { data } = await apiClient.post(`/sessions/${sessionId}/bookmark`, {
+        name,
+        description,
+    });
+    return data;
+};
+
+export const branchSession = async (sessionId: string, bookmarkId: string, newSessionName?: string): Promise<SessionInfo> => {
+    const { data } = await apiClient.post(`/sessions/${sessionId}/branch`, {
+        bookmark_id: bookmarkId,
+        new_session_name: newSessionName,
+    });
+    return data;
+};
+
+export const getChapters = async (novelId: string): Promise<ChapterInfo[]> => {
+    const { data } = await apiClient.get(`/sessions/${novelId}/chapters`);
     return data;
 };

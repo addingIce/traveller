@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Network, History, Brain, ChevronRight, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed } from 'lucide-react';
 import G6 from '@antv/g6';
-import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig } from './api';
+import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, resetConfig, getConfigPresets, restartServices, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
 const SESSION_KEY = "traveller_session_id";
@@ -186,6 +186,15 @@ const App: React.FC = () => {
     const [selectedFile, setSelectedFile] = useState<File | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
+    // Session & Timeline State
+    const [currentSessionId, setCurrentSessionId] = useState<string>('');
+    const [sessions, setSessions] = useState<SessionInfo[]>([]);
+    const [isSessionsLoading, setIsSessionsLoading] = useState(false);
+    const [chapters, setChapters] = useState<ChapterInfo[]>([]);
+    const [isChaptersLoading, setIsChaptersLoading] = useState(false);
+    const [showBookmarkModal, setShowBookmarkModal] = useState(false);
+    const [bookmarkName, setBookmarkName] = useState('');
+
     // System Config State
     const [config, setConfig] = useState<SystemConfig | null>(null);
     const [isConfigLoading, setIsConfigLoading] = useState(false);
@@ -303,6 +312,8 @@ const App: React.FC = () => {
     useEffect(() => {
         if (currentCollection) {
             loadGraph(activeTab === 'graph');
+            loadSessions();
+            loadChapters();
         }
     }, [currentCollection]);
 
@@ -523,6 +534,9 @@ const scrollToSection = (sectionId: string) => {
         const interval = setInterval(async () => {
             try {
                 const status = await getNovelStatus(collectionName);
+                if (['completed', 'extracting', 'ready'].includes(status.status)) {
+                    loadChapters();
+                }
                 if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
                     clearInterval(interval);
                     await loadNovelsList();
@@ -537,18 +551,23 @@ const scrollToSection = (sectionId: string) => {
         if (confirm('确定要删除这部小说吗？')) {
             try {
                 await deleteNovel(collectionName);
-                await loadNovelsList();
+                setNovels(prev => {
+                    const next = prev.filter(n => n.collection_name !== collectionName);
+                    if (currentCollection === collectionName) {
+                        setCurrentCollection(next[0]?.collection_name || '');
+                    }
+                    return next;
+                });
                 // 如果删除的是当前小说，切换到第一个可用小说
                 if (currentCollection === collectionName) {
                     clearGraph();  // 清理旧图谱
-                    const remaining = novels.filter(n => n.collection_name !== collectionName);
-                    if (remaining.length > 0) {
-                        setCurrentCollection(remaining[0].collection_name);
-                        loadGraph();
-                    } else {
-                        setCurrentCollection('');
-                    }
+                    setCurrentSessionId('');
+                    setSessions([]);
+                    setChapters([]);
+                    setHistory([]);
                 }
+                // 后台刷新以确保一致性
+                loadNovelsList();
             } catch (e) {
                 alert('删除失败');
                 console.error(e);
@@ -559,8 +578,75 @@ const scrollToSection = (sectionId: string) => {
     const handleSelectNovel = (collectionName: string) => {
         if (currentCollection === collectionName) return;
         setCurrentCollection(collectionName);
-        clearGraph();  // 清理旧图谱
-        // 不再直接调用 loadGraph()，让 useEffect 自动处理 currentCollection 变化
+        setCurrentSessionId(''); // Reset session when switching novel
+        setSessions([]);
+        setChapters([]);
+        clearGraph();
+    };
+
+    // --- Session & Timeline Functions ---
+    const loadSessions = async () => {
+        if (!currentCollection) return;
+        setIsSessionsLoading(true);
+        try {
+            const data = await listSessions(currentCollection);
+            setSessions(data);
+            
+            // Auto select root session or the most recent one if no current session
+            if (data.length > 0) {
+                const root = data.find(s => s.is_root);
+                setCurrentSessionId(root?.session_id || data[0].session_id);
+            }
+        } catch (e) {
+            console.error("加载 Session 失败", e);
+        } finally {
+            setIsSessionsLoading(false);
+        }
+    };
+
+    const loadChapters = async () => {
+        if (!currentCollection) return;
+        setIsChaptersLoading(true);
+        try {
+            const data = await getChapters(currentCollection);
+            setChapters(data);
+        } catch (e) {
+            console.error("加载章节失败", e);
+        } finally {
+            setIsChaptersLoading(false);
+        }
+    };
+
+    const handleCreateSession = async () => {
+        if (!currentCollection) return;
+        try {
+            const name = `新的冒险 ${new Date().toLocaleTimeString()}`;
+            const newSess = await createSession(currentCollection, sessionId, name);
+            setSessions(prev => [newSess, ...prev]);
+            setCurrentSessionId(newSess.session_id);
+            setHistory([]); // Clear local chat history for new session
+        } catch (e) {
+            alert("创建冒失败");
+        }
+    };
+
+    const handleSwitchSession = (sid: string) => {
+        setCurrentSessionId(sid);
+        setHistory([]); // In a real app, we might want to reload history from Zep
+        // Reload graph to show session-specific context (if applicable in future)
+        loadGraph(activeTab === 'graph');
+    };
+
+    const handleCreateBookmark = async () => {
+        if (!currentSessionId || !bookmarkName.trim()) return;
+        try {
+            await createBookmark(currentSessionId, bookmarkName.trim());
+            setShowBookmarkModal(false);
+            setBookmarkName('');
+            alert("书签已创建！");
+        } catch (e) {
+            alert("创建书签失败");
+        }
     };
 
     const handleUploadClick = () => {
@@ -834,7 +920,8 @@ const scrollToSection = (sectionId: string) => {
         setIsChatting(true);
 
         try {
-            const aiResponse = await chatInteract(sessionId, currentCollection, userMessage);
+            const sessToUse = currentSessionId || sessionId;
+            const aiResponse = await chatInteract(sessToUse, currentCollection, userMessage);
             setHistory(prev => [...prev, { type: 'ai', ...aiResponse }]);
 
             // If the action caused a long-term change, refresh our graph quietly
@@ -994,6 +1081,51 @@ const scrollToSection = (sectionId: string) => {
                         </div>
                     )}
 
+                    {/* Parallel Universes (Sessions) Selector */}
+                    <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm flex flex-col min-h-0 max-h-[400px]">
+                        <div className="flex justify-between items-center mb-4">
+                            <div className="text-amber-400 font-semibold flex items-center gap-2 text-sm">
+                                <History className="w-4 h-4 shrink-0" />
+                                <span>平行宇宙</span>
+                            </div>
+                            <button
+                                onClick={handleCreateSession}
+                                className="w-8 h-8 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 transition-all flex items-center justify-center"
+                                title="开启新的平行宇宙"
+                            >
+                                <Plus className="w-4 h-4" />
+                            </button>
+                        </div>
+                        <div className="space-y-2 overflow-y-auto custom-scrollbar flex-1">
+                            {isSessionsLoading ? (
+                                <div className="text-center py-4 text-slate-500"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></div>
+                            ) : sessions.length === 0 ? (
+                                <div className="text-center py-4 text-slate-500 text-xs">暂无平行宇宙</div>
+                            ) : (
+                                sessions.map((sess) => (
+                                    <div
+                                        key={sess.session_id}
+                                        onClick={() => handleSwitchSession(sess.session_id)}
+                                        className={`p-3 rounded-xl cursor-pointer transition-all border ${
+                                            currentSessionId === sess.session_id
+                                                ? 'bg-amber-500/10 border-amber-500/50'
+                                                : 'bg-white/5 border-white/5 hover:border-white/10'
+                                        }`}
+                                    >
+                                        <div className="font-medium truncate text-sm flex items-center gap-2 h-5">
+                                            {sess.is_root && <BookOpen className="w-3 h-3 text-sky-400 shrink-0" />}
+                                            <span className="truncate leading-none">{sess.session_name}</span>
+                                        </div>
+                                        <div className="text-[10px] text-slate-500 mt-1 flex justify-between">
+                                            <span>{sess.is_root ? '原始剧情线' : '玩家分支'}</span>
+                                            <span>{sess.last_interaction_at ? new Date(sess.last_interaction_at).toLocaleDateString() : '尚未开始'}</span>
+                                        </div>
+                                    </div>
+                                ))
+                            )}
+                        </div>
+                    </div>
+
                     <div className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 backdrop-blur-sm">
                         <h2 className="text-sky-400 font-semibold mb-4">世界设定统计</h2>
                         <div className="grid grid-cols-2 gap-4 text-center">
@@ -1130,18 +1262,28 @@ const scrollToSection = (sectionId: string) => {
 
                         {/* Nav Tabs */}
                         <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center bg-white/5 z-10 relative">
-                            <div className="flex gap-1 p-1 bg-black/20 rounded-lg">
+                            <div className="inline-flex items-center gap-1 rounded-xl bg-white/5 border border-white/10 p-1">
                                 <button
                                     onClick={() => setActiveTab('plot')}
-                                    className={`px-4 py-1.5 rounded-md text-sm transition-all ${activeTab === 'plot' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20' : 'text-slate-400 hover:text-white'}`}
+                                    className={`h-8 px-4 rounded-lg text-sm leading-none transition-all flex items-center gap-2 ${
+                                        activeTab === 'plot'
+                                            ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20'
+                                            : 'text-slate-400 hover:text-white'
+                                    }`}
                                 >
-                                    剧情时间线推演
+                                    <History className="w-4 h-4 shrink-0" />
+                                    <span>平行宇宙</span>
                                 </button>
                                 <button
                                     onClick={() => setActiveTab('graph')}
-                                    className={`px-4 py-1.5 rounded-md text-sm transition-all ${activeTab === 'graph' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                                    className={`h-8 px-4 rounded-lg text-sm leading-none transition-all flex items-center gap-2 ${
+                                        activeTab === 'graph'
+                                            ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20'
+                                            : 'text-slate-400 hover:text-white'
+                                    }`}
                                 >
-                                    后台 Zep 物理图谱
+                                    <Network className="w-4 h-4 shrink-0" />
+                                    <span>Zep 物理图谱</span>
                                 </button>
                             </div>
                         </div>
@@ -1234,7 +1376,46 @@ const scrollToSection = (sectionId: string) => {
 
                         {/* Chat/Story Body */}
                         <div className="relative flex flex-col flex-1 bg-black/20 overflow-hidden" style={{ display: activeTab === 'plot' ? 'flex' : 'none' }}>
-                            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+                            {/* Original Storyline Timeline */}
+                            <div className="border-b border-white/5 bg-slate-800/20 p-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                                        <History className="w-3 h-3" /> 原始剧情时间线
+                                    </h3>
+                                    <span className="text-[10px] text-slate-600">{chapters.length} 个章节已载入</span>
+                                </div>
+                                <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
+                                    {isChaptersLoading ? (
+                                        <Loader2 className="w-4 h-4 animate-spin opacity-50" />
+                                    ) : chapters.length === 0 ? (
+                                        <p className="text-[10px] text-slate-600">暂无捕捉到明显章节结构</p>
+                                    ) : (
+                                        chapters.map((ch) => (
+                                            <div 
+                                                key={ch.id} 
+                                                className="min-w-[180px] group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/30 rounded-xl p-3 transition-all cursor-pointer relative"
+                                            >
+                                                <div className="text-xs font-medium text-sky-400 truncate mb-1">{ch.title}</div>
+                                                <div className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
+                                                    {ch.content_preview}
+                                                </div>
+                                                <button 
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        // Future: branch from this specific chapter
+                                                        handleCreateSession(); 
+                                                    }}
+                                                    className="absolute inset-0 bg-sky-500/80 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-all"
+                                                >
+                                                    从本章开启平行宇宙
+                                                </button>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                            </div>
+                            
+                            <div className="flex-1 overflow-y-auto p-6 space-y-6 flex flex-col">
 
                                 {history.length === 0 && (
                                     <div className="text-center h-full flex flex-col justify-center items-center opacity-40">
@@ -1268,10 +1449,22 @@ const scrollToSection = (sectionId: string) => {
                                                 </div>
 
                                                 {/* 核心叙事描述 */}
-                                                <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-5 space-y-4">
+                                                <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-5 space-y-4 group/msg relative">
                                                     <div className="text-slate-300 leading-relaxed whitespace-pre-wrap font-serif tracking-wide text-[15px]">
                                                         {msg.story_text}
                                                     </div>
+
+                                                    {/* Bookmark Button */}
+                                                    <button 
+                                                        onClick={() => {
+                                                            setShowBookmarkModal(true);
+                                                            setBookmarkName(`书签 ${new Date().toLocaleTimeString()}`);
+                                                        }}
+                                                        className="absolute -right-12 top-0 p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-500 hover:text-amber-400 opacity-0 group-hover/msg:opacity-100 transition-all"
+                                                        title="点击创建书签"
+                                                    >
+                                                        <Save className="w-5 h-5" />
+                                                    </button>
 
                                                     {/* 如果存在长期世界状态的影响改变通知 */}
                                                     {msg.world_impact?.world_state_changed && msg.world_impact.reason && (
@@ -1324,6 +1517,41 @@ const scrollToSection = (sectionId: string) => {
                     </div>
                 </section>
             </main>
+
+            {/* Bookmark Modal */}
+            {showBookmarkModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in duration-200">
+                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-amber-400">
+                            <Save className="w-5 h-5" />
+                            创建书签
+                        </h3>
+                        <p className="text-xs text-slate-400 mb-4">保存当前故事节点以便稍后分支到“平行宇宙”</p>
+                        <input
+                            type="text"
+                            value={bookmarkName}
+                            onChange={(e) => setBookmarkName(e.target.value)}
+                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:border-amber-500"
+                            placeholder="书签名称"
+                            autoFocus
+                        />
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowBookmarkModal(false)}
+                                className="flex-1 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleCreateBookmark}
+                                className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm"
+                            >
+                                确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Config Modal */}
             {showConfigModal && (

@@ -373,6 +373,15 @@ async def process_novel_task(
                         n.status = 'processing'
                     ON MATCH SET 
                         n.status = 'processing'
+                    WITH n
+                    MERGE (s:Session {uuid: $collection_name})
+                    ON CREATE SET
+                        s.name = '原始剧情线',
+                        s.user_id = 'system',
+                        s.created_at = $created_at,
+                        s.last_interaction_at = $created_at,
+                        s.is_root = true
+                    MERGE (n)-[:HAS_SESSION]->(s)
                     RETURN n
                     """
                     await session.run(
@@ -381,7 +390,7 @@ async def process_novel_task(
                         title=novel_title,
                         created_at=status_store[collection_name]["created_at"]
                     )
-                    print(f"[INFO] Created/Updated Novel node: {collection_name}")
+                    print(f"[INFO] Created/Updated Novel and root Session node: {collection_name}")
             except Exception as e:
                 print(f"[ERROR] Failed to create Novel node: {e}")
         
