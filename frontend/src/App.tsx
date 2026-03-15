@@ -222,7 +222,7 @@ const App: React.FC = () => {
     const [edgeDetail, setEdgeDetail] = useState<AggregatedEdgeDetail | null>(null);
 
     // Custom type for generic message history inside the app UI
-    const [history, setHistory] = useState<(ChatResponse & { type: 'ai' } | { type: 'user', content: string })[]>([]);
+    const [history, setHistory] = useState<(ChatResponse & { type: 'ai' } | { type: 'user', content: string, mode?: 'free' | 'act' | 'say' | 'think' })[]>([]);
 
     // Novel Management State
     const [novels, setNovels] = useState<NovelInfo[]>([]);
@@ -1199,14 +1199,8 @@ const scrollToSection = (sectionId: string) => {
             return;
         }
 
-        const rawInput = chatInput.trim();
-        let userMessage = rawInput;
-        if (inputMode === 'act' && !rawInput.startsWith('/act ')) {
-            userMessage = `/act ${rawInput}`;
-        } else if (inputMode === 'say' && !rawInput.startsWith('/say ')) {
-            userMessage = `/say ${rawInput}`;
-        }
-        setHistory(prev => [...prev, { type: 'user', content: userMessage }]);
+        const userMessage = chatInput.trim();
+        setHistory(prev => [...prev, { type: 'user', content: userMessage, mode: inputMode }]);
         setChatInput("");
         setIsChatting(true);
 
@@ -1957,9 +1951,28 @@ const scrollToSection = (sectionId: string) => {
 
                                 {history.map((msg, i) => {
                                     if (msg.type === 'user') {
+                                        const modeClass = msg.mode === 'act'
+                                            ? 'bg-amber-500/20 text-amber-100 border-amber-500/30'
+                                            : msg.mode === 'say'
+                                                ? 'bg-sky-500/20 text-sky-100 border-sky-500/30'
+                                                : msg.mode === 'think'
+                                                    ? 'bg-indigo-500/20 text-indigo-100 border-indigo-500/30 italic'
+                                                    : 'bg-sky-500/20 text-sky-100 border-sky-500/30';
+                                        const modeLabel = msg.mode === 'act'
+                                            ? '动作'
+                                            : msg.mode === 'say'
+                                                ? '对白'
+                                                : msg.mode === 'think'
+                                                    ? '心理'
+                                                    : '';
                                         return (
                                             <div key={i} className="flex justify-end animate-in slide-in-from-right duration-300">
-                                                <div className="bg-sky-500/20 text-sky-100 border border-sky-500/30 rounded-2xl rounded-tr-sm px-5 py-3 max-w-[70%]">
+                                                <div className={`border rounded-2xl rounded-tr-sm px-5 py-3 max-w-[70%] ${modeClass}`}>
+                                                    {modeLabel && (
+                                                        <div className="text-[10px] uppercase tracking-widest opacity-70 mb-1">
+                                                            {modeLabel}
+                                                        </div>
+                                                    )}
                                                     {msg.content}
                                                 </div>
                                             </div>
@@ -2102,9 +2115,9 @@ const scrollToSection = (sectionId: string) => {
                                         </button>
                                     </div>
                                     <div className="text-[10px] text-slate-500">
-                                        {inputMode === 'act' && '将以 /act 前缀发送'}
-                                        {inputMode === 'say' && '将以 /say 前缀发送'}
-                                        {inputMode === 'think' && '作为内心独白推演'}
+                                        {inputMode === 'act' && '动作输入模式'}
+                                        {inputMode === 'say' && '对白输入模式'}
+                                        {inputMode === 'think' && '心理输入模式'}
                                         {inputMode === 'free' && '自由输入'}
                                     </div>
                                 </div>
