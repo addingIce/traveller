@@ -209,6 +209,10 @@ const App: React.FC = () => {
     const [bookmarkName, setBookmarkName] = useState('');
     const [bookmarks, setBookmarks] = useState<any[]>([]);
     const [isBookmarksLoading, setIsBookmarksLoading] = useState(false);
+    const [showBranchModal, setShowBranchModal] = useState(false);
+    const [branchSessionName, setBranchSessionName] = useState('');
+    const [branchBookmarkId, setBranchBookmarkId] = useState<string | null>(null);
+    const [branchBookmarkName, setBranchBookmarkName] = useState<string | null>(null);
     const [waypoints, setWaypoints] = useState<WaypointStatus[]>([]);
     const [isWaypointsLoading, setIsWaypointsLoading] = useState(false);
 
@@ -822,14 +826,26 @@ const scrollToSection = (sectionId: string) => {
         }
     };
 
-    const handleBranchFromBookmark = async (bookmarkId: string) => {
+    const handleBranchFromBookmark = (bookmarkId: string, bookmarkName: string) => {
         if (!currentSessionId) return;
+        setBranchBookmarkId(bookmarkId);
+        setBranchBookmarkName(bookmarkName);
+        setBranchSessionName(`${bookmarkName} (分支)`);
+        setShowBranchModal(true);
+    };
+
+    const handleConfirmBranch = async () => {
+        if (!currentSessionId || !branchBookmarkId || !branchSessionName.trim()) return;
         try {
             setIsSessionsLoading(true);
-            const newSession = await branchSession(currentSessionId, bookmarkId);
+            const newSession = await branchSession(currentSessionId, branchBookmarkId, branchSessionName.trim());
             await loadSessions();
             setCurrentSessionId(newSession.session_id);
             setHistory([]); 
+            setShowBranchModal(false);
+            setBranchSessionName('');
+            setBranchBookmarkId(null);
+            setBranchBookmarkName(null);
             showAlert('分支开启', `已成功从书签切入新的平行宇宙：${newSession.session_name}`, 'success');
         } catch (e) {
             showAlert('操作失败', '无法从该观测点开启分支', 'error');
@@ -1706,7 +1722,7 @@ const scrollToSection = (sectionId: string) => {
                                         <div className="text-[10px] text-slate-500 flex justify-between items-center">
                                             <span>{new Date(bm.created_at).toLocaleDateString()}</span>
                                             <button 
-                                                onClick={() => handleBranchFromBookmark(bm.id)}
+                                            onClick={() => handleBranchFromBookmark(bm.id, bm.name)}
                                                 className="opacity-0 group-hover:opacity-100 px-2 py-0.5 bg-sky-500/20 hover:bg-sky-500 text-sky-400 hover:text-white rounded text-[9px] transition-all font-bold uppercase"
                                             >
                                                 Branch 分支
@@ -2099,6 +2115,44 @@ const scrollToSection = (sectionId: string) => {
                                 className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm"
                             >
                                 确定
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Branch From Bookmark Modal */}
+            {showBranchModal && (
+                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in duration-200">
+                        <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-amber-400">
+                            <Save className="w-5 h-5" />
+                            从书签开启分支
+                        </h3>
+                        <p className="text-xs text-slate-400 mb-4">
+                            {branchBookmarkName ? `基于书签「${branchBookmarkName}」创建新的平行宇宙` : "基于书签创建新的平行宇宙"}
+                        </p>
+                        <input
+                            type="text"
+                            value={branchSessionName}
+                            onChange={(e) => setBranchSessionName(e.target.value)}
+                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:border-amber-500"
+                            placeholder="分支名称"
+                            autoFocus
+                        />
+                        <div className="flex gap-3">
+                            <button
+                                onClick={() => setShowBranchModal(false)}
+                                className="flex-1 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm"
+                            >
+                                取消
+                            </button>
+                            <button
+                                onClick={handleConfirmBranch}
+                                disabled={!branchSessionName.trim()}
+                                className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                                确认
                             </button>
                         </div>
                     </div>

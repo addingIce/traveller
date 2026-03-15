@@ -5,6 +5,7 @@ import re
 from typing import List, Dict, Any, Optional
 from openai import AsyncOpenAI
 from zep_python import Message
+from app.services.session_service import SessionService
 
 class ActionParser:
     def __init__(self, client: AsyncOpenAI, model: str):
@@ -86,22 +87,32 @@ class ContextAssembler:
             "session_summary": "",
             "world_background": "",
             "relevant_entities": [],
-            "waypoints": []
+            "waypoints": [],
+            "start_chapter_id": None,
+            "start_chapter_title": None,
+            "start_chapter_preview": None
         }
 
         # 0. Fetch Session Metadata for Branching Context
-        start_chapter_content = ""
         try:
             # Get session info to check for start_chapter_id
             session_info = await self.zep.memory.get_session(session_id)
             if session_info and session_info.metadata:
                 start_ch_id = session_info.metadata.get("start_chapter_id")
                 if start_ch_id:
-                    # In this system, chapters are messages in the 'novel_{novel_id}' session
-                    novel_sess_id = novel_id if novel_id.startswith("novel_") else f"novel_{novel_id}"
-                    # We might need to fetch the specific message. 
-                    # For simplicity, we'll note it in the context.
                     context["start_chapter_id"] = start_ch_id
+                    # Resolve chapter title/preview via existing extractor
+                    try:
+                        session_service = SessionService(self.zep, self.neo4j)
+                        chapters = await session_service.extract_chapters(novel_id)
+                        for ch in chapters:
+                            if ch.get("id") == start_ch_id:
+                                context["start_chapter_title"] = ch.get("title")
+                                context["start_chapter_preview"] = ch.get("content_preview")
+                                print(f"[INFO] ContextAssembler: start_chapter_id={start_ch_id}, title={context['start_chapter_title']}")
+                                break
+                    except Exception as ch_err:
+                        print(f"[DEBUG] ContextAssembler: Chapter lookup failed: {ch_err}")
         except Exception as e:
             print(f"[DEBUG] ContextAssembler: Session metadata fetch failed: {e}")
 
@@ -221,6 +232,15 @@ class DirectorAI:
             mode_instruction = "收束模式：你是剧情的设计师。在保持逻辑合理的前提下，利用 NPC 行动、环境巨变或突发事件产生叙事压力，引导玩家向指定的路标靠拢。"
             convergence_hint = "增加环境压力和NPC的主动干预，纠正偏离主线的行为。"
 
+        start_chapter_block = ""
+        if context.get("start_chapter_id"):
+            start_chapter_title = context.get("start_chapter_title") or "未知章节"
+            start_chapter_preview = context.get("start_chapter_preview") or ""
+            start_chapter_block = f"""
+        - 起始章节: {context['start_chapter_id']} | {start_chapter_title}
+        - 起始章节摘要: {start_chapter_preview}
+        """
+
         system_prompt = f"""
         # Role: 穿越者引擎导演 (Director AI)
         
@@ -232,6 +252,7 @@ class DirectorAI:
         - 关键实体: {"; ".join(context['relevant_entities'])}
         - {waypoint_label}: {"; ".join(context['waypoints'])}
         - 历史摘要: {context['session_summary']}
+        {start_chapter_block}
         
         ## Waypoint Trigger Rules (判定准则):
         1. **增量判定**：只有当玩家当前的动作或你生成的剧情剧情中，**新发生**了符合路标描述的事件时，才判定为“达成”。

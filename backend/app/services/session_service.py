@@ -76,19 +76,43 @@ class SessionService:
             if start_chapter_id:
                 metadata["start_chapter_id"] = start_chapter_id
 
-            # Create session with metadata first
-            await self.zep.memory.add_session(
-                session_id=session_id,
-                user_id=user_id,
-                metadata=metadata
-            )
+            # Create session with metadata first (retry without user_id if Zep rejects unknown users)
+            try:
+                await self.zep.memory.add_session(
+                    session_id=session_id,
+                    user_id=user_id,
+                    metadata=metadata
+                )
+            except Exception as e:
+                if "user not found" in str(e).lower():
+                    print(f"[WARNING] Zep rejected user_id for {session_id}, retrying without user_id")
+                    await self.zep.memory.add_session(
+                        session_id=session_id,
+                        metadata=metadata
+                    )
+                else:
+                    raise
+
             # Add initial message
             await self.zep.memory.add(
-                session_id, 
+                session_id,
                 messages=[Message(role="system", role_type="system", content="INIT")]
             )
         except Exception as e:
-            print(f"[DEBUG] Session {session_id} Zep initialization failed: {e}")
+            print(f"[ERROR] Session {session_id} Zep initialization failed: {e}")
+            # Roll back Neo4j session node to avoid orphaned sessions
+            try:
+                async with self.neo4j.session() as session:
+                    await session.run(
+                        """
+                        MATCH (s:Session {uuid: $sid})
+                        DETACH DELETE s
+                        """,
+                        sid=session_id
+                    )
+            except Exception as cleanup_err:
+                print(f"[WARNING] Failed to rollback Neo4j session {session_id}: {cleanup_err}")
+            raise
         
         return {
             "session_id": session_id,
@@ -202,18 +226,49 @@ class SessionService:
         # Retrieve ALL history from source
         source_memory = await self.zep.memory.get(session_id)
         messages_to_copy = []
+        source_ids = []
         for msg in source_memory.messages:
+            msg_id = getattr(msg, "uuid_", None) or getattr(msg, "uuid", None)
+            is_init = (
+                (msg.role_type == "system" or msg.role == "system")
+                and (msg.content or "").strip() == "INIT"
+            )
+            if is_init:
+                # Skip INIT to avoid duplicate system messages in branched sessions
+                if checkpoint_id and msg_id == checkpoint_id:
+                    break
+                continue
             messages_to_copy.append(Message(
                 role=msg.role,
                 role_type=msg.role_type,
                 content=msg.content
             ))
-            if msg.uuid == checkpoint_id:
+            source_ids.append(msg_id)
+            if checkpoint_id and msg_id == checkpoint_id:
                 break
         
         if messages_to_copy:
             # Add messages to the new session
             await self.zep.memory.add(new_session_id, messages=messages_to_copy)
+
+        # Build old->new checkpoint mapping by order (Zep regenerates UUIDs)
+        id_map = {}
+        try:
+            new_memory = await self.zep.memory.get(new_session_id)
+            new_msgs = new_memory.messages or []
+            # Drop the initial system INIT message to align with source_ids
+            filtered_new_msgs = [
+                m for m in new_msgs
+                if not (
+                    (getattr(m, "role_type", None) == "system" or getattr(m, "role", None) == "system")
+                    and (getattr(m, "content", "") or "").strip() == "INIT"
+                )
+            ]
+            if len(filtered_new_msgs) >= len(source_ids):
+                new_ids = [getattr(m, "uuid_", None) or getattr(m, "uuid", None) for m in filtered_new_msgs[:len(source_ids)]]
+                id_map = {old: new for old, new in zip(source_ids, new_ids) if old and new}
+        except Exception as map_err:
+            print(f"[WARNING] Failed to build checkpoint id map for {new_session_id}: {map_err}")
 
         # 4. Clone bookmarks in Neo4j
         async with self.neo4j.session() as session:
@@ -233,6 +288,11 @@ class SessionService:
             bookmarks = [dict(record["b"]) async for record in res]
             
             for bm in bookmarks:
+                old_cp_id = bm.get("checkpoint_id", "")
+                if old_cp_id and old_cp_id not in id_map:
+                    # Skip bookmarks beyond the branch checkpoint or with unknown mapping
+                    continue
+                new_cp_id = id_map.get(old_cp_id, "")
                 new_bm_id = str(uuid.uuid4())
                 create_bm_query = """
                 MATCH (ns:Session {uuid: $ns_id})
@@ -250,7 +310,7 @@ class SessionService:
                     name=bm["name"],
                     desc=bm.get("description", ""),
                     created=bm["created_at"],
-                    cp_id=bm["checkpoint_id"]
+                    cp_id=new_cp_id
                 )
 
         return new_session_info

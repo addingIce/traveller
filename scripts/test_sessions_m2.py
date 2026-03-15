@@ -59,7 +59,7 @@ async def test_sessions_flow():
         try:
             chat_payload = {
                 "session_id": session_id,
-                "collection_name": novel_id,
+                "novel_id": novel_id,
                 "message": "我要去酒馆喝一杯。"
             }
             resp = await client.post(f"{BASE_URL}/chat/interact", json=chat_payload)
