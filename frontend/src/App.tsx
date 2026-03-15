@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Network, History, Brain, ChevronRight, ChevronDown, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap } from 'lucide-react';
+import { Network, History, Brain, ChevronRight, ChevronDown, PenTool, Send, Loader2, Upload, Trash2, Plus, BookOpen, ZoomIn, ZoomOut, LocateFixed, Zap, X, GitBranch } from 'lucide-react';
 import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage, getSessionWaypoints, WaypointStatus } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
@@ -15,6 +15,14 @@ const NOVEL_STATUS_META: Partial<Record<NovelStatus, { color: string; label: str
     processing: { color: 'text-amber-400', label: '⏳ 处理中' },
     queued: { color: 'text-slate-400', label: '⏸️ 排队中' },
     failed: { color: 'text-red-400', label: '✗ 失败' },
+};
+
+const STAGE_LABELS: Record<string, string> = {
+    chunking: '分块中',
+    writing: '写入中',
+    extracting: '实体提取中',
+    dedup: '去重中',
+    completed: '已完成'
 };
 
 const getNovelCountLabel = (status: NovelStatus, count: number): string => {
@@ -146,9 +154,9 @@ const filterGraphByTypes = (raw: any, types: Set<string>): { nodes: any[]; edges
     if (!types.size) {
         return { nodes: [], edges: [] };
     }
-    const allowedNodes = nodes.filter((n) => types.has(String(n?.type || 'concept')));
-    const allowedIds = new Set(allowedNodes.map((n) => String(n.id)));
-    const allowedEdges = edges.filter((e) => allowedIds.has(String(e.source)) && allowedIds.has(String(e.target)));
+    const allowedNodes = nodes.filter((n: { type?: string }) => types.has(String(n?.type || 'concept')));
+    const allowedIds = new Set(allowedNodes.map((n: { id: string | number }) => String(n.id)));
+    const allowedEdges = edges.filter((e: { source: string | number; target: string | number }) => allowedIds.has(String(e.source)) && allowedIds.has(String(e.target)));
     return { nodes: allowedNodes, edges: allowedEdges };
 };
 
@@ -283,6 +291,10 @@ const App: React.FC = () => {
     const [startChapterId, setStartChapterId] = useState<string | null>(null);
     const [startChapterTitle, setStartChapterTitle] = useState<string | null>(null);
     const [activeSection, setActiveSection] = useState<string>('presets');
+    
+    // Chapter detail modal
+    const [showChapterModal, setShowChapterModal] = useState(false);
+    const [selectedChapter, setSelectedChapter] = useState<ChapterInfo | null>(null);
 
     const graphContainer = useRef<HTMLDivElement>(null);
     const graphRef = useRef<any>(null);
@@ -291,6 +303,7 @@ const App: React.FC = () => {
     const pendingFocusNodeIdRef = useRef<string | null>(null);
     const factsAbortControllerRef = useRef<AbortController | null>(null);
     const searchTokenRef = useRef<number>(0);
+    const pollingStatusRef = useRef<NovelStatus | null>(null);
 
     // Modal State
     const [modalConfig, setModalConfig] = useState<ModalConfig>({
@@ -445,17 +458,26 @@ const App: React.FC = () => {
         if (!currentNovel) return;
         if (!['processing', 'completed', 'extracting'].includes(currentNovel.status)) return;
 
+        // 初始化轮询状态跟踪
+        pollingStatusRef.current = currentNovel.status;
+        
         let active = true;
         const interval = setInterval(async () => {
             try {
                 const status = await getNovelStatus(currentCollection);
                 if (!active) return;
+                
+                // 只在状态变化时调用 loadChapters，避免重复刷新
+                const statusChanged = pollingStatusRef.current !== status.status;
+                if (statusChanged && ['completed', 'extracting', 'ready'].includes(status.status)) {
+                    loadChapters(currentCollection);
+                }
+                
                 setNovels(prev =>
                     prev.map(n => n.collection_name === currentCollection ? { ...n, status: status.status } : n)
                 );
-                if (['completed', 'extracting', 'ready'].includes(status.status)) {
-                    loadChapters(currentCollection);
-                }
+                pollingStatusRef.current = status.status;
+                
                 if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
                     clearInterval(interval);
                     await loadNovelsList();
@@ -539,6 +561,11 @@ const App: React.FC = () => {
                 loadGraph();
             } else {
                 renderGraph(graphData);
+            }
+        } else if (activeTab === 'plot') {
+            // 切换到剧情线 tab 时刷新章节
+            if (currentCollection) {
+                loadChapters();
             }
         }
     }, [activeTab]);
@@ -753,6 +780,12 @@ const scrollToSection = (sectionId: string) => {
         const interval = setInterval(async () => {
             try {
                 const status = await getNovelStatus(collectionName);
+                // 更新 novels 列表中的进度信息
+                setNovels(prev => prev.map(n => 
+                    n.collection_name === collectionName 
+                        ? { ...n, progress: status.progress, stage: status.stage, eta_seconds: status.eta_seconds, status: status.status }
+                        : n
+                ));
                 // 只在状态首次变为 completed/extracting/ready 时调用 loadChapters
                 if (['completed', 'extracting', 'ready'].includes(status.status) && lastStatus !== status.status) {
                     loadChapters(collectionName);
@@ -1385,8 +1418,17 @@ const scrollToSection = (sectionId: string) => {
                                     </button>
                                 </div>
                                 {IN_PROGRESS_NOVEL_STATUSES.has(selectedNovel.status) && (
-                                    <div className="mt-2 w-full bg-black/30 rounded-full h-1">
-                                        <div className="bg-sky-500 h-1 rounded-full animate-pulse" style={{ width: '50%' }} />
+                                    <div className="mt-2">
+                                        <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                            <span>{selectedNovel.stage ? STAGE_LABELS[selectedNovel.stage] : '处理中'}</span>
+                                            <span>{selectedNovel.progress ? Math.round(selectedNovel.progress) : 0}%</span>
+                                        </div>
+                                        <div className="w-full bg-black/30 rounded-full h-1">
+                                            <div 
+                                                className="bg-sky-500 h-1 rounded-full transition-all duration-300" 
+                                                style={{ width: `${selectedNovel.progress || 0}%` }} 
+                                            />
+                                        </div>
                                     </div>
                                 )}
                             </div>
@@ -1438,8 +1480,17 @@ const scrollToSection = (sectionId: string) => {
                                         </button>
                                     </div>
                                     {IN_PROGRESS_NOVEL_STATUSES.has(novel.status) && (
-                                        <div className="mt-2 w-full bg-black/30 rounded-full h-1">
-                                            <div className="bg-sky-500 h-1 rounded-full animate-pulse" style={{ width: '50%' }} />
+                                        <div className="mt-2">
+                                            <div className="flex justify-between text-[10px] text-slate-400 mb-1">
+                                                <span>{novel.stage ? STAGE_LABELS[novel.stage] : '处理中'}</span>
+                                                <span>{novel.progress ? Math.round(novel.progress) : 0}%</span>
+                                            </div>
+                                            <div className="w-full bg-black/30 rounded-full h-1">
+                                                <div 
+                                                    className="bg-sky-500 h-1 rounded-full transition-all duration-300" 
+                                                    style={{ width: `${novel.progress || 0}%` }} 
+                                                />
+                                            </div>
                                         </div>
                                     )}
                                 </div>
@@ -2011,35 +2062,47 @@ const scrollToSection = (sectionId: string) => {
                                     </button>
                                 </div>
                                 {isTimelineExpanded && (
-                                    <div className="mt-3 flex gap-4 overflow-x-auto pb-2 custom-scrollbar no-scrollbar overscroll-x-contain snap-x snap-mandatory">
+                                    <div className="mt-3 max-h-60 overflow-y-auto overflow-x-hidden custom-scrollbar">
                                         {isChaptersLoading ? (
                                             <Loader2 className="w-4 h-4 animate-spin opacity-50" />
                                         ) : chapters.length === 0 ? (
                                             <p className="text-[10px] text-slate-600">暂无捕捉到明显章节结构</p>
                                         ) : (
-                                            chapters.map((ch) => (
-                                                <div 
-                                                    key={ch.id} 
-                                                    className="w-56 shrink-0 snap-start group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/30 rounded-xl p-3 transition-all cursor-pointer relative"
-                                                >
-                                                    <div className="text-xs font-medium text-sky-400 truncate mb-1">{ch.title}</div>
-                                                    <div className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
-                                                        {ch.content_preview}
-                                                    </div>
-                                                    <button 
-                                                        onClick={(e) => {
-                                                            e.stopPropagation();
-                                                            setStartChapterId(ch.id);
-                                                            setStartChapterTitle(ch.title);
-                                                            setNewSessionName(`基于: ${ch.title}`);
-                                                            setShowNewSessionModal(true);
+                                            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+                                                {chapters.map((ch) => (
+                                                    <div 
+                                                        key={ch.id} 
+                                                        onClick={() => {
+                                                            setSelectedChapter(ch);
+                                                            setShowChapterModal(true);
                                                         }}
-                                                        className="absolute inset-0 bg-sky-500/80 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-all"
+                                                        className="group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/30 rounded-xl p-3 transition-all cursor-pointer relative"
                                                     >
-                                                        从本章开启平行宇宙
-                                                    </button>
-                                                </div>
-                                            ))
+                                                        <div className="text-xs font-medium text-sky-400 truncate mb-1">{ch.title}</div>
+                                                        <div className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
+                                                            {ch.content_preview}
+                                                        </div>
+                                                        <div 
+                                                            className="absolute inset-0 bg-sky-500/90 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex flex-col items-center justify-center gap-1 rounded-xl transition-all"
+                                                        >
+                                                            <span>点击查看完整内容</span>
+                                                            <button 
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    setShowChapterModal(false);
+                                                                    setStartChapterId(ch.id);
+                                                                    setStartChapterTitle(ch.title);
+                                                                    setNewSessionName(`基于: ${ch.title}`);
+                                                                    setShowNewSessionModal(true);
+                                                                }}
+                                                                className="mt-1 px-3 py-1 bg-white/20 hover:bg-white/30 rounded-lg text-[10px] transition-all"
+                                                            >
+                                                                从本章开启平行宇宙
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         )}
                                     </div>
                                 )}
@@ -2385,6 +2448,55 @@ const scrollToSection = (sectionId: string) => {
                                 className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                                 确认
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Chapter Detail Modal */}
+            {showChapterModal && selectedChapter && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
+                    <div className="bg-slate-800 border border-white/10 rounded-2xl w-full max-w-2xl max-h-[80vh] shadow-2xl flex flex-col">
+                        {/* Header */}
+                        <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center shrink-0">
+                            <h3 className="text-lg font-semibold text-sky-400 flex items-center gap-2">
+                                <BookOpen className="w-5 h-5" />
+                                {selectedChapter.title}
+                            </h3>
+                            <button
+                                onClick={() => setShowChapterModal(false)}
+                                className="p-2 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        {/* Content */}
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                            <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
+                                {selectedChapter.content || selectedChapter.content_preview}
+                            </p>
+                        </div>
+                        {/* Footer */}
+                        <div className="px-6 py-4 border-t border-white/10 flex justify-end gap-3 shrink-0">
+                            <button
+                                onClick={() => setShowChapterModal(false)}
+                                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all"
+                            >
+                                关闭
+                            </button>
+                            <button
+                                onClick={() => {
+                                    setShowChapterModal(false);
+                                    setStartChapterId(selectedChapter.id);
+                                    setStartChapterTitle(selectedChapter.title);
+                                    setNewSessionName(`基于: ${selectedChapter.title}`);
+                                    setShowNewSessionModal(true);
+                                }}
+                                className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm transition-all flex items-center gap-2"
+                            >
+                                <GitBranch className="w-4 h-4" />
+                                从本章开启平行宇宙
                             </button>
                         </div>
                     </div>

@@ -26,7 +26,7 @@ class BusinessConfig(BaseModel):
     """业务配置"""
     max_file_size_mb: int = 10
     chunk_min_length: int = 100
-    chunk_max_length: int = 500
+    chunk_max_length: int = 2000
     zep_timeout: int = 300
     neo4j_timeout: int = 30
 

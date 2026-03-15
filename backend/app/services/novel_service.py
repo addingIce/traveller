@@ -14,43 +14,137 @@ def generate_collection_name(title: str) -> str:
     title_hash = hashlib.md5(title.encode()).hexdigest()[:8]
     return f"novel_{timestamp}_{title_hash}"
 
-def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 500) -> list[str]:
+def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 2000) -> list[str]:
+    """
+    智能分块函数：
+    1. 优先按章节边界分割
+    2. 段落优先合并
+    3. 超长段落按句子分割（支持中英文标点）
+    """
     chunks = []
-    paragraphs = content.split("\n\n")
+    
+    # 章节标题正则：第X章/节/回/部/卷，必须独立成行（前后为换行或文本边界）
+    # 使用多行模式，^ 匹配行首
+    chapter_pattern = r'(^|\n)(第[一二三四五六七八九十百千万零\d]+[章节回部卷][^\n]*)'
+    
+    # 按章节分割
+    chapter_parts = re.split(chapter_pattern, content, flags=re.MULTILINE)
+    
+    # 如果有章节结构，按章节处理
+    if len(chapter_parts) > 1:
+        current_chapter = ""
+        i = 0
+        while i < len(chapter_parts):
+            part = chapter_parts[i]
+            
+            # 跳过空部分和前导换行符
+            if not part or part == '\n':
+                i += 1
+                continue
+            
+            # 检查是否是章节标题（成对出现：前导符 + 标题）
+            if i + 1 < len(chapter_parts) and re.match(r'第[一二三四五六七八九十百千万零\d]+[章节回部卷]', chapter_parts[i + 1] if i + 1 < len(chapter_parts) else ''):
+                # 下一个是章节标题，当前是前导内容
+                if current_chapter:
+                    chunks.extend(_split_long_chunk(current_chapter, min_length, max_length))
+                current_chapter = ""
+                i += 1
+                continue
+            
+            # 判断是否是章节标题
+            if re.match(r'第[一二三四五六七八九十百千万零\d]+[章节回部卷]', part):
+                # 保存上一章节
+                if current_chapter:
+                    chunks.extend(_split_long_chunk(current_chapter, min_length, max_length))
+                current_chapter = part.strip() + "\n\n"
+            else:
+                current_chapter += part.strip()
+            
+            i += 1
+        
+        # 处理最后一章节
+        if current_chapter:
+            chunks.extend(_split_long_chunk(current_chapter, min_length, max_length))
+    else:
+        # 无章节结构，按段落处理
+        chunks = _split_by_paragraphs(content, min_length, max_length)
+    
+    return chunks
+
+
+def _split_long_chunk(content: str, min_length: int, max_length: int) -> list[str]:
+    """将超长内容按段落和句子分割"""
+    if len(content) <= max_length:
+        return [content] if len(content) >= min_length else []
+    return _split_by_paragraphs(content, min_length, max_length)
+
+
+def _split_by_paragraphs(content: str, min_length: int, max_length: int) -> list[str]:
+    """按段落分割，段落优先合并"""
+    chunks = []
+    paragraphs = re.split(r'\n\s*\n', content)  # 按空行分割
     current_chunk = ""
     
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
-            
+        
+        # 如果当前段落加上新段落不超过限制，合并
         if len(current_chunk) + len(para) + 2 <= max_length:
             current_chunk += (("\n\n" if current_chunk else "") + para)
         else:
+            # 保存当前 chunk
             if len(current_chunk) >= min_length:
                 chunks.append(current_chunk)
             
+            # 处理超长段落
             if len(para) > max_length:
-                sentences = re.split(r'[。！？\n]', para)
-                temp_chunk = ""
-                for sentence in sentences:
-                    sentence = sentence.strip()
-                    if not sentence:
-                        continue
-                    if len(temp_chunk) + len(sentence) + 1 <= max_length:
-                        temp_chunk += (sentence + "。")
-                    else:
-                        if len(temp_chunk) >= min_length:
-                            chunks.append(temp_chunk)
-                        temp_chunk = sentence + "。"
-                current_chunk = temp_chunk
+                # 先尝试按句子分割
+                sentences = _split_sentences(para)
+                
+                # 如果分割后仍有超长句子，按字符强制分割
+                if any(len(s) > max_length for s in sentences):
+                    chunks.extend(_split_by_characters(para, min_length, max_length))
+                    current_chunk = ""
+                else:
+                    temp_chunk = ""
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                        if len(temp_chunk) + len(sentence) + 1 <= max_length:
+                            temp_chunk += (sentence + "。")
+                        else:
+                            if len(temp_chunk) >= min_length:
+                                chunks.append(temp_chunk)
+                            temp_chunk = sentence + "。"
+                    current_chunk = temp_chunk
             else:
                 current_chunk = para
     
+    # 处理最后一个 chunk
     if len(current_chunk) >= min_length:
         chunks.append(current_chunk)
     
     return chunks
+
+
+def _split_by_characters(content: str, min_length: int, max_length: int) -> list[str]:
+    """按字符强制分割（最后手段）"""
+    chunks = []
+    for i in range(0, len(content), max_length):
+        chunk = content[i:i + max_length]
+        if len(chunk) >= min_length:
+            chunks.append(chunk)
+    return chunks
+
+
+def _split_sentences(text: str) -> list[str]:
+    """按中英文句子分割"""
+    # 支持中文句号、问号、感叹号、英文标点
+    sentences = re.split(r'[。！？.!?\n]+', text)
+    return [s for s in sentences if s.strip()]
 
 
 def _normalize_entity_name(name: str) -> str:
@@ -228,19 +322,39 @@ async def monitor_entity_extraction(
     neo4j_driver,
     status_store: dict
 ) -> None:
+    """监控实体提取进度，直到完成或小说被删除"""
     if not neo4j_driver:
         return
     
-    # 恢复场景下 status_store 可能不存在该小说，先兜底避免 KeyError
-    status_store.setdefault(collection_name, {
-        "status": "completed",
-        "progress": 100.0,
-        "chunks_processed": 0,
-        "total_chunks": 0,
-        "error_message": None,
-        "created_at": datetime.utcnow().isoformat(),
-        "title": collection_name,
-    })
+    async def check_novel_exists() -> bool:
+        """检查小说是否仍存在（未被删除）"""
+        try:
+            async with neo4j_driver.session() as session:
+                result = await session.run(
+                    "MATCH (n:Novel {collection_name: $cn}) RETURN n",
+                    cn=collection_name
+                )
+                record = await result.single()
+                return record is not None
+        except Exception:
+            return False
+    
+    # 首先检查小说是否存在，不存在则直接退出
+    if not await check_novel_exists():
+        print(f"[INFO] {collection_name}: Novel not found, skipping monitoring (may have been deleted)")
+        return
+    
+    # 仅当小说存在且 status_store 中没有条目时才创建（恢复场景）
+    if collection_name not in status_store:
+        status_store[collection_name] = {
+            "status": "completed",
+            "progress": 100.0,
+            "chunks_processed": 0,
+            "total_chunks": 0,
+            "error_message": None,
+            "created_at": datetime.utcnow().isoformat(),
+            "title": collection_name,
+        }
     
     max_check_count = 60
     check_interval = 10
@@ -253,6 +367,16 @@ async def monitor_entity_extraction(
         for i in range(max_check_count):
             await asyncio.sleep(check_interval)
             time_elapsed = (i + 1) * check_interval
+            
+            # 每次迭代检查小说是否已被删除
+            if not await check_novel_exists():
+                print(f"[INFO] {collection_name}: Novel deleted during monitoring, stopping")
+                return
+            
+            # 检查 status_store 中是否仍有条目（被删除则退出）
+            if collection_name not in status_store:
+                print(f"[INFO] {collection_name}: Removed from status_store, stopping monitoring")
+                return
             
             try:
                 async with neo4j_driver.session() as session:
@@ -291,6 +415,7 @@ async def monitor_entity_extraction(
                         print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
                         
                         if stable_count >= stable_threshold:
+                            status_store[collection_name]["stage"] = "dedup"  # 进入去重阶段
                             try:
                                 dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
                                 if dedup_stats.get("removed_nodes", 0) > 0:
@@ -302,6 +427,7 @@ async def monitor_entity_extraction(
                                 print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
 
                             status_store[collection_name]["status"] = "ready"
+                            status_store[collection_name]["stage"] = "completed"  # 全部完成
                             try:
                                 async with neo4j_driver.session() as session:
                                     update_query = """
@@ -323,6 +449,7 @@ async def monitor_entity_extraction(
                     print(f"[DEBUG] {collection_name}: Monitoring ({entity_count} entities, {time_elapsed}s elapsed)")
         
         if last_entity_count > 0:
+            status_store[collection_name]["stage"] = "dedup"  # 进入去重阶段
             try:
                 dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
                 if dedup_stats.get("removed_nodes", 0) > 0:
@@ -334,6 +461,7 @@ async def monitor_entity_extraction(
                 print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
 
             status_store[collection_name]["status"] = "ready"
+            status_store[collection_name]["stage"] = "completed"  # 全部完成
             try:
                 async with neo4j_driver.session() as session:
                     update_query = """
@@ -348,6 +476,9 @@ async def monitor_entity_extraction(
         else:
             print(f"[WARNING] {collection_name}: No entities extracted after monitoring")
     
+    except asyncio.CancelledError:
+        print(f"[INFO] {collection_name}: Monitoring task cancelled")
+        raise  # 重新抛出以便 asyncio 正确处理
     except Exception as e:
         print(f"[ERROR] Entity extraction monitoring failed: {e}")
 
@@ -359,8 +490,15 @@ async def process_novel_task(
     status_store: dict,
     neo4j_driver = None
 ) -> None:
+    # 延迟导入避免循环依赖
+    from app.api.endpoints.config import runtime_config
+    import time
+    
     try:
+        # 记录开始时间
+        status_store[collection_name]["start_time"] = time.time()
         status_store[collection_name]["status"] = "processing"
+        status_store[collection_name]["stage"] = "chunking"
         
         if neo4j_driver:
             try:
@@ -394,9 +532,14 @@ async def process_novel_task(
             except Exception as e:
                 print(f"[ERROR] Failed to create Novel node: {e}")
         
-        chunks = smart_chunk_content(content, min_length=100, max_length=500)
+        chunks = smart_chunk_content(
+            content, 
+            min_length=runtime_config.business.chunk_min_length, 
+            max_length=runtime_config.business.chunk_max_length
+        )
         total_chunks = len(chunks)
         status_store[collection_name]["total_chunks"] = total_chunks
+        status_store[collection_name]["stage"] = "writing"  # 进入写入阶段
 
         # 在链路不稳定时对 get_session/add_session 做轻量重试，避免瞬断导致整本小说失败
         session_ready = False
@@ -423,8 +566,26 @@ async def process_novel_task(
         if not session_ready:
             raise RuntimeError("Zep 会话初始化失败（服务可能暂时不可用或网络不稳定）")
         
-        batch_size = 2
-        for i in range(0, len(chunks), batch_size):
+        batch_size = runtime_config.performance.batch_size
+        batch_delay = runtime_config.performance.batch_delay
+        total_batches = (len(chunks) - 1) // batch_size + 1
+        
+        # 断点续传：检查已处理的批次
+        processed_chunks = status_store[collection_name].get("chunks_processed", 0)
+        failed_batches = status_store[collection_name].get("failed_batches", [])
+        start_batch_index = processed_chunks // batch_size
+        
+        # 记录开始时间用于预估
+        import time
+        start_time = time.time()
+        
+        for i in range(start_batch_index * batch_size, len(chunks), batch_size):
+            batch_num = i // batch_size + 1
+            
+            # 跳过已成功的批次
+            if batch_num <= start_batch_index and batch_num not in failed_batches:
+                continue
+            
             batch = chunks[i:i + batch_size]
             messages = [
                 Message(
@@ -436,26 +597,49 @@ async def process_novel_task(
             ]
             
             retries = 3
+            batch_success = False
             while retries > 0:
                 try:
-                    print(f"[DEBUG] Writing batch {i // batch_size + 1}/{(len(chunks) - 1) // batch_size + 1} to Zep...")
+                    print(f"[DEBUG] Writing batch {batch_num}/{total_batches} to Zep...")
                     await client.memory.add(collection_name, messages=messages)
-                    print(f"[DEBUG] Batch {i // batch_size + 1} written successfully")
+                    print(f"[DEBUG] Batch {batch_num} written successfully")
+                    batch_success = True
                     break
                 except Exception as e:
-                    print(f"[DEBUG] Batch {i // batch_size + 1} failed (retries left: {retries}): {e}")
+                    print(f"[DEBUG] Batch {batch_num} failed (retries left: {retries}): {e}")
                     retries -= 1
                     if retries == 0:
+                        # 记录失败批次
+                        if batch_num not in failed_batches:
+                            failed_batches.append(batch_num)
+                        status_store[collection_name]["failed_batches"] = failed_batches
                         raise e
                     await asyncio.sleep(2)
             
+            # 成功后从失败列表移除
+            if batch_success and batch_num in failed_batches:
+                failed_batches.remove(batch_num)
+                status_store[collection_name]["failed_batches"] = failed_batches
+            
             processed = min(i + batch_size, total_chunks)
             status_store[collection_name]["chunks_processed"] = processed
-            status_store[collection_name]["progress"] = (processed / total_chunks) * 100
             
-            await asyncio.sleep(1)
+            # 计算进度和预估时间
+            progress = (processed / total_chunks) * 100
+            status_store[collection_name]["progress"] = progress
+            
+            # 预估剩余时间
+            elapsed = time.time() - start_time
+            if processed > 0 and elapsed > 0:
+                rate = processed / elapsed  # chunks per second
+                remaining = total_chunks - processed
+                eta = remaining / rate if rate > 0 else 0
+                status_store[collection_name]["eta_seconds"] = int(eta)
+            
+            await asyncio.sleep(batch_delay)
         
         status_store[collection_name]["status"] = "completed"
+        status_store[collection_name]["stage"] = "extracting"  # 进入实体抽取阶段
         status_store[collection_name]["progress"] = 100.0
         
         if neo4j_driver:
@@ -471,7 +655,9 @@ async def process_novel_task(
             except Exception as e:
                 print(f"[ERROR] Failed to update Novel node status: {e}")
         
-        asyncio.create_task(monitor_entity_extraction(collection_name, neo4j_driver, status_store))
+        # 启动监控任务并保存引用
+        monitor_task = asyncio.create_task(monitor_entity_extraction(collection_name, neo4j_driver, status_store))
+        status_store[collection_name]["_monitor_task"] = monitor_task
         
     except Exception as e:
         status_store[collection_name]["status"] = "failed"

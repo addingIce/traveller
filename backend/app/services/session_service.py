@@ -327,10 +327,10 @@ class SessionService:
                 zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
                 zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
                 print(f"[DEBUG] Calling Zep HTTP API: {zep_api_url}/api/v1/session/{session_id}/messages")
-                async with httpx.AsyncClient(timeout=10.0) as http_client:
+                async with httpx.AsyncClient(timeout=30.0) as http_client:
                     resp = await http_client.get(
                         f"{zep_api_url}/api/v1/session/{session_id}/messages",
-                        params={"limit": 200},
+                        params={"limit": 1000},  # 增大限制以支持长篇小说
                         headers={"Authorization": f"Bearer {zep_api_key}"}
                     )
                     print(f"[DEBUG] Zep HTTP response status: {resp.status_code}")
@@ -358,7 +358,75 @@ class SessionService:
                 except Exception as sdk_err:
                     print(f"[ERROR] extracting chapters from Zep SDK: {sdk_err}")
             
+            # 3) Direct PostgreSQL query fallback (bypasses Zep message_window limit)
+            # Zep CE has a default message_window limit that restricts returned messages
+            # This queries the database directly to get ALL messages
+            if not messages or len(messages) < 20:
+                print(f"[DEBUG] Trying direct PostgreSQL query for session {session_id}...")
+                try:
+                    import asyncpg
+                    pg_user = os.getenv("POSTGRES_USER", "zep")
+                    pg_password = os.getenv("POSTGRES_PASSWORD", "zep")
+                    pg_host = os.getenv("POSTGRES_HOST", "localhost")
+                    pg_port = os.getenv("POSTGRES_PORT", "5432")
+                    pg_db = os.getenv("POSTGRES_DB", "zep")
+                    
+                    # 连接 PostgreSQL（使用 localhost，因为我们在 host 上运行）
+                    conn = await asyncpg.connect(
+                        host=pg_host,
+                        port=int(pg_port),
+                        user=pg_user,
+                        password=pg_password,
+                        database=pg_db
+                    )
+                    try:
+                        rows = await conn.fetch(
+                            """
+                            SELECT uuid, content, created_at 
+                            FROM messages 
+                            WHERE session_id = $1 
+                            ORDER BY created_at ASC
+                            """,
+                            session_id
+                        )
+                        print(f"[DEBUG] PostgreSQL direct query returned {len(rows)} messages")
+                        if rows:
+                            messages = [
+                                type("Msg", (), {"uuid": row["uuid"], "content": row["content"] or ""})()
+                                for row in rows
+                                if row["content"]
+                            ]
+                    finally:
+                        await conn.close()
+                except Exception as pg_err:
+                    print(f"[WARNING] Direct PostgreSQL query failed: {pg_err}")
+            
             print(f"[DEBUG] Total messages to process: {len(messages)}")
+            
+            # Zep 返回的消息默认是倒序的（最新在前），需要反转
+            # 尝试按 created_at 排序，如果没有则反转
+            try:
+                # 尝试获取 created_at 并排序
+                def get_created_at(msg):
+                    # 尝试多种方式获取创建时间
+                    if hasattr(msg, 'created_at'):
+                        return msg.created_at or ""
+                    if hasattr(msg, 'metadata') and msg.metadata:
+                        return msg.metadata.get('created_at', "")
+                    return ""
+                
+                # 检查是否有 created_at 属性
+                has_created_at = any(get_created_at(m) for m in messages)
+                if has_created_at:
+                    messages = sorted(messages, key=lambda m: get_created_at(m) or "")
+                    print(f"[DEBUG] Sorted messages by created_at")
+                else:
+                    # 没有 created_at，直接反转
+                    messages = list(reversed(messages))
+                    print(f"[DEBUG] Reversed messages order")
+            except Exception as sort_err:
+                print(f"[WARNING] Failed to sort messages: {sort_err}, reversing instead")
+                messages = list(reversed(messages))
             
             chapters = []
             # Regex for Chinese chapter titles: 第[一二三四五六七八九十百千0-9]+[章节回堂回讲课]...
@@ -406,6 +474,7 @@ class SessionService:
                         chapters.append({
                             "id": f"{msg_id}-ch{idx+1}",
                             "title": title or f"章节 {len(chapters) + 1}",
+                            "content": chapter_content,  # 完整内容
                             "content_preview": preview,
                             "order": len(chapters) + 1
                         })
@@ -418,6 +487,7 @@ class SessionService:
                         chapters.append({
                             "id": msg_id,
                             "title": title or f"章节 {len(chapters) + 1}",
+                            "content": content,  # 完整内容
                             "content_preview": preview,
                             "order": len(chapters) + 1
                         })
@@ -442,11 +512,11 @@ class SessionService:
                             MATCH (e:Episodic {group_id: $group_id})
                             RETURN e.uuid as uuid, e.content as content, e.created_at as created_at
                             ORDER BY e.created_at ASC
-                            LIMIT 10
                             """,
                             group_id=session_id
                         )
                         episodic = [dict(record) async for record in result]
+                    print(f"[DEBUG] Found {len(episodic)} episodic nodes in Neo4j")
                     for i, record in enumerate(episodic):
                         content = (record.get("content") or "").strip()
                         if not content:
@@ -454,6 +524,7 @@ class SessionService:
                         chapters.append({
                             "id": record.get("uuid") or f"episodic-{i+1}",
                             "title": f"片段 {i+1}",
+                            "content": content,  # 完整内容
                             "content_preview": content[:200] + ("..." if len(content) > 200 else ""),
                             "order": i + 1
                         })

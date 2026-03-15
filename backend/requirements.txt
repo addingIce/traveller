@@ -8,4 +8,5 @@ pydantic
 httpx
 alembic
 psycopg2-binary
+asyncpg
 python-multipart

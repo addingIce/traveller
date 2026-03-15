@@ -29,6 +29,9 @@ class NovelInfo(BaseModel):
     status: str  # processing/completed/failed
     created_at: str
     chunks_count: int = 0
+    progress: float = 0.0
+    stage: Optional[str] = None  # chunking/writing/extracting/dedup/completed
+    eta_seconds: Optional[int] = None
 
 
 class UploadResponse(BaseModel):
@@ -47,6 +50,8 @@ class ProcessStatusResponse(BaseModel):
     progress: float  # 0-100
     chunks_processed: int
     total_chunks: int
+    stage: Optional[str] = None  # chunking/writing/extracting/dedup/completed
+    eta_seconds: Optional[int] = None  # 预计剩余时间
     error_message: Optional[str] = None
 
 
@@ -152,7 +157,11 @@ async def upload_novel(
         "total_chunks": 0,
         "error_message": None,
         "created_at": datetime.utcnow().isoformat(),
-        "title": novel_title
+        "title": novel_title,
+        "stage": "queued",  # 当前阶段：queued/chunking/writing/extracting/dedup/completed
+        "failed_batches": [],  # 失败的批次号
+        "eta_seconds": 0,  # 预估剩余时间
+        "start_time": None,  # 开始处理时间
     }
     
     # 启动异步处理任务
@@ -197,12 +206,19 @@ async def get_novels_list(request: Request):
         created_at = existing.created_at or incoming.created_at
         status = existing.status if existing.status != "unknown" else incoming.status
         chunks_count = existing.chunks_count if existing.chunks_count > 0 else incoming.chunks_count
+        # 优先使用有值的 progress、stage、eta_seconds
+        progress = existing.progress if existing.progress > 0 else incoming.progress
+        stage = existing.stage or incoming.stage
+        eta_seconds = existing.eta_seconds if existing.eta_seconds is not None else incoming.eta_seconds
         return NovelInfo(
             collection_name=existing.collection_name,
             title=title,
             status=status,
             created_at=created_at,
             chunks_count=chunks_count,
+            progress=progress,
+            stage=stage,
+            eta_seconds=eta_seconds,
         )
     
     # 优先从 Neo4j 获取所有有数据的小说
@@ -235,13 +251,17 @@ async def get_novels_list(request: Request):
                     task_info = status_store.get(collection_name, {})
                     status = task_info.get("status", novel_status)
                     chunks_count = resolve_chunks_count(status, task_info, entity_count)
+                    progress = task_info.get("progress", 100.0 if status in ["completed", "extracting", "ready"] else 0.0)
                     
                     novels.append(NovelInfo(
                         collection_name=collection_name,
                         title=novel_title,
                         status=status,
                         created_at=created_at,
-                        chunks_count=chunks_count
+                        chunks_count=chunks_count,
+                        progress=progress,
+                        stage=task_info.get("stage"),
+                        eta_seconds=task_info.get("eta_seconds")
                     ))
                 
                 # 获取没有 Novel 节点的旧小说（只有 Entity 节点）
@@ -263,13 +283,17 @@ async def get_novels_list(request: Request):
                     # 从 status_store 获取额外的元数据（如果有）
                     task_info = status_store.get(collection_name, {})
                     old_status = task_info.get("status", "completed")
+                    progress = task_info.get("progress", 100.0 if old_status in ["completed", "extracting", "ready"] else 0.0)
                     
                     novels.append(NovelInfo(
                         collection_name=collection_name,
                         title=task_info.get("title", collection_name),  # 使用 collection_name 作为标题
                         status=old_status,
                         created_at=task_info.get("created_at", ""),
-                        chunks_count=resolve_chunks_count(old_status, task_info, entity_count)
+                        chunks_count=resolve_chunks_count(old_status, task_info, entity_count),
+                        progress=progress,
+                        stage=task_info.get("stage"),
+                        eta_seconds=task_info.get("eta_seconds")
                     ))
         except Exception as e:
             print(f"[ERROR] Failed to get novels from Neo4j: {e}")
@@ -282,13 +306,17 @@ async def get_novels_list(request: Request):
             continue
         status_value = task_info.get("status", "unknown")
         chunks_count = resolve_chunks_count(status_value, task_info, 0)
+        progress = task_info.get("progress", 0.0)
 
         novels.append(NovelInfo(
             collection_name=collection_name,
             title=task_info.get("title", collection_name),
             status=status_value,
             created_at=task_info.get("created_at", ""),
-            chunks_count=chunks_count
+            chunks_count=chunks_count,
+            progress=progress,
+            stage=task_info.get("stage"),
+            eta_seconds=task_info.get("eta_seconds")
         ))
 
     # 兜底去重：即使查询层出现重复，也保证返回列表按 collection_name 唯一
@@ -324,6 +352,8 @@ async def get_novel_status(collection_name: str, request: Request):
             progress=task_info.get("progress", 0.0),
             chunks_processed=task_info.get("chunks_processed", 0),
             total_chunks=task_info.get("total_chunks", 0),
+            stage=task_info.get("stage"),
+            eta_seconds=task_info.get("eta_seconds"),
             error_message=task_info.get("error_message")
         )
 
@@ -354,6 +384,8 @@ async def get_novel_status(collection_name: str, request: Request):
                         progress=progress,
                         chunks_processed=0,
                         total_chunks=0,
+                        stage="completed" if db_status in {"ready", "completed"} else None,
+                        eta_seconds=None,
                         error_message=None
                     )
         except Exception as e:
@@ -479,8 +511,14 @@ async def delete_novel(collection_name: str, request: Request):
                 errors.append(error_msg)
                 print(f"[ERROR] {error_msg}")
         
-        # 4. 从状态存储中移除
+        # 4. 取消监控任务并从状态存储中移除
         if collection_name in status_store:
+            task_info = status_store[collection_name]
+            # 取消正在运行的监控任务
+            monitor_task = task_info.get("_monitor_task")
+            if monitor_task and not monitor_task.done():
+                monitor_task.cancel()
+                print(f"[INFO] Cancelled monitoring task for {collection_name}")
             del status_store[collection_name]
         # 5. 清理图谱缓存
         try:
@@ -585,12 +623,13 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                         """, collection_name=collection_name)
                     status_store[collection_name]["status"] = "completed"
                     
-                    # 启动实体提取监控
-                    asyncio.create_task(monitor_entity_extraction(
+                    # 启动实体提取监控并保存引用
+                    monitor_task = asyncio.create_task(monitor_entity_extraction(
                         collection_name,
                         neo4j_driver,
                         status_store
                     ))
+                    status_store[collection_name]["_monitor_task"] = monitor_task
                 else:
                     # Zep无数据，分块失败
                     print(f"[WARNING] {title}: Zep无数据，标记为failed")
@@ -615,14 +654,16 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                             """, collection_name=collection_name)
                         status_store[collection_name]["status"] = "failed"
                     else:
-                        # Zep有数据但无实体，提取失败
-                        print(f"[WARNING] {title}: Zep有数据但无实体，标记为failed")
-                        async with neo4j_driver.session() as update_session:
-                            await update_session.run("""
-                                MATCH (n:Novel {collection_name: $collection_name})
-                                SET n.status = 'failed'
-                            """, collection_name=collection_name)
-                        status_store[collection_name]["status"] = "failed"
+                        # Zep有数据但无实体，可能还在提取中，启动监控
+                        print(f"[INFO] {title}: Zep有数据但无实体，启动监控等待提取")
+                        status_store[collection_name]["status"] = "extracting"
+                        # 启动实体提取监控并保存引用
+                        monitor_task = asyncio.create_task(monitor_entity_extraction(
+                            collection_name,
+                            neo4j_driver,
+                            status_store
+                        ))
+                        status_store[collection_name]["_monitor_task"] = monitor_task
                 else:
                     # 有实体，等待30秒观察
                     print(f"[INFO] {title}: 有实体，观察增长情况...")
@@ -660,12 +701,13 @@ async def recover_novel_status(neo4j_driver, status_store: dict):
                             """, collection_name=collection_name)
                         status_store[collection_name]["status"] = "extracting"
                         
-                        # 启动实体提取监控
-                        asyncio.create_task(monitor_entity_extraction(
+                        # 启动实体提取监控并保存引用
+                        monitor_task = asyncio.create_task(monitor_entity_extraction(
                             collection_name,
                             neo4j_driver,
                             status_store
                         ))
+                        status_store[collection_name]["_monitor_task"] = monitor_task
         
         print("[INFO] 小说状态检查完成")
         

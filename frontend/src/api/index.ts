@@ -58,6 +58,7 @@ export interface BookmarkInfo {
 export interface ChapterInfo {
     id: string;
     title: string;
+    content: string;  // 完整内容
     content_preview: string;
     order: number;
 }
@@ -117,6 +118,9 @@ export interface NovelInfo {
     status: NovelStatus;
     created_at: string;
     chunks_count: number;
+    progress?: number;
+    stage?: 'chunking' | 'writing' | 'extracting' | 'dedup' | 'completed';
+    eta_seconds?: number;
 }
 
 export interface UploadResponse {
@@ -133,6 +137,8 @@ export interface ProcessStatusResponse {
     progress: number;
     chunks_processed: number;
     total_chunks: number;
+    stage?: 'chunking' | 'writing' | 'extracting' | 'dedup' | 'completed';
+    eta_seconds?: number;
     error_message?: string;
 }
 
