@@ -59,6 +59,20 @@ def _normalize_entity_name(name: str) -> str:
     normalized = unicodedata.normalize("NFKC", name or "")
     return normalized.strip().lower()
 
+def _normalize_type_from_id(entity_type_id: Any) -> str:
+    try:
+        type_id = int(entity_type_id)
+    except Exception:
+        type_id = 0
+    mapping = {
+        1: "person",
+        2: "place",
+        3: "org",
+        4: "item",
+        5: "concept",
+    }
+    return mapping.get(type_id, "concept")
+
 
 def _coerce_priority(node: Dict[str, Any]) -> int:
     try:
@@ -300,15 +314,17 @@ async def get_knowledge_graph(
                     count(r) as rel_count,
                     n.group_id as group_id,
                     n.source as source,
-                    n.priority as priority
+                    n.priority as priority,
+                    n.entity_type_id as entity_type_id
                 """
                 node_result = await session.run(node_query, group_ids=group_ids)
                 nodes = []
                 async for record in node_result:
+                    normalized_type = _normalize_type_from_id(record["entity_type_id"])
                     nodes.append({
                         "id": record["uuid"],
                         "label": record["name"],
-                        "type": record["labels"][0] if record["labels"] else "concept",
+                        "type": normalized_type,
                         "summary": record["summary"] or "",
                         "rel_count": int(record["rel_count"] or 0),
                         "group_id": record["group_id"],

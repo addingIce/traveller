@@ -336,8 +336,12 @@ class ResilientOpenAIClient(OpenAIClient):
                             )
                             # ID 规则
                             id_rule = "\n\nCRITICAL ID RULE: Use the exact 'id' or 'entity_id' from the provided ENTITIES list. Do not use 1-based indexing if the list uses 0-based. Your project IDs must match the input IDs exactly."
-                            # entity_type_id 规则：修复 ValidationError
-                            entity_type_rule = "\n\nIMPORTANT FIELD RULE: Every entity object MUST include 'entity_type_id' field. For default Entity type, use entity_type_id=0. Never omit this field."
+                            # entity_type_id 规则：修复 ValidationError + 统一类型映射
+                            entity_type_rule = (
+                                "\n\nIMPORTANT FIELD RULE: Every entity object MUST include 'entity_type_id' field. "
+                                "Use ONLY the following mapping: 1=人物, 2=地点, 3=组织, 4=物品, 5=概念, 0=未知. "
+                                "Never omit this field."
+                            )
                             # duplicate_fact_idx 规则：修复 TypeError
                             duplicate_rule = "\n\nIMPORTANT FIELD RULE: The 'duplicate_fact_idx' field must ALWAYS be an integer (-1 if no duplicate). Never return a list for this field. Similarly, 'contradicted_facts' should be a list of integers, not nested lists."
                             

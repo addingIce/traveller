@@ -140,6 +140,18 @@ const prepareGraphRenderData = (raw: any): { nodes: any[]; edges: any[] } => {
     return { nodes, edges: renderedEdges };
 };
 
+const filterGraphByTypes = (raw: any, types: Set<string>): { nodes: any[]; edges: any[] } => {
+    const nodes = Array.isArray(raw?.nodes) ? raw.nodes : [];
+    const edges = Array.isArray(raw?.edges) ? raw.edges : [];
+    if (!types.size) {
+        return { nodes: [], edges: [] };
+    }
+    const allowedNodes = nodes.filter((n) => types.has(String(n?.type || 'concept')));
+    const allowedIds = new Set(allowedNodes.map((n) => String(n.id)));
+    const allowedEdges = edges.filter((e) => allowedIds.has(String(e.source)) && allowedIds.has(String(e.target)));
+    return { nodes: allowedNodes, edges: allowedEdges };
+};
+
 const getSessionId = () => {
     const params = new URLSearchParams(window.location.search);
     const sidFromUrl = params.get("sid");
@@ -206,6 +218,8 @@ const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState<'graph' | 'plot'>('plot');
     const [graphData, setGraphData] = useState<any>(null);
     const [isGraphLoading, setIsGraphLoading] = useState(false);
+    const [graphTypeFilters, setGraphTypeFilters] = useState<Set<string>>(new Set(['person']));
+    const filteredGraph = graphData ? filterGraphByTypes(graphData, graphTypeFilters) : { nodes: [], edges: [] };
     const [chatInput, setChatInput] = useState("");
     const [isChatting, setIsChatting] = useState(false);
     const [inputMode, setInputMode] = useState<'free' | 'act' | 'say' | 'think'>('free');
@@ -495,6 +509,12 @@ const App: React.FC = () => {
             }
         }
     }, [activeTab]);
+
+    useEffect(() => {
+        if (graphData && activeTab === 'graph') {
+            renderGraph(graphData);
+        }
+    }, [graphTypeFilters]);
 
     useEffect(() => {
         if (factsAbortControllerRef.current) {
@@ -974,7 +994,9 @@ const scrollToSection = (sectionId: string) => {
 
         // Return early if no data
         if (data.nodes?.length === 0) return;
-        const renderData = prepareGraphRenderData(data);
+        const filtered = filterGraphByTypes(data, graphTypeFilters);
+        if (filtered.nodes.length === 0) return;
+        const renderData = prepareGraphRenderData(filtered);
 
         graphRef.current = new G6.Graph({
             container: graphContainer.current,
@@ -1805,7 +1827,7 @@ const scrollToSection = (sectionId: string) => {
                                     <span>Zep 物理图谱</span>
                                     {activeTab === 'graph' && (
                                         <span className="text-[10px] opacity-70 ml-1">
-                                            ({graphData?.nodes?.length || 0}实体, {graphData?.edges?.length || 0}关系)
+                                            ({filteredGraph?.nodes?.length || 0}实体, {filteredGraph?.edges?.length || 0}关系)
                                         </span>
                                     )}
                                 </button>
@@ -1814,6 +1836,40 @@ const scrollToSection = (sectionId: string) => {
 
                         {/* Visualizer Body */}
                         <div className="relative bg-black/20 flex-1 overflow-hidden" style={{ display: activeTab === 'graph' ? 'block' : 'none' }}>
+                            <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm text-[10px] uppercase tracking-widest text-slate-300">
+                                {[
+                                    { key: 'person', label: '人物' },
+                                    { key: 'place', label: '地点' },
+                                    { key: 'org', label: '组织' },
+                                    { key: 'item', label: '物品' },
+                                    { key: 'concept', label: '概念' },
+                                ].map((t) => {
+                                    const active = graphTypeFilters.has(t.key);
+                                    return (
+                                        <button
+                                            key={t.key}
+                                            onClick={() => {
+                                                setGraphTypeFilters(prev => {
+                                                    const next = new Set(prev);
+                                                    if (next.has(t.key)) {
+                                                        next.delete(t.key);
+                                                    } else {
+                                                        next.add(t.key);
+                                                    }
+                                                    return next;
+                                                });
+                                            }}
+                                            className={`px-2 py-1 rounded-lg border transition-all ${
+                                                active
+                                                    ? 'bg-sky-500/20 border-sky-400 text-sky-200'
+                                                    : 'border-white/10 text-slate-500 hover:text-white'
+                                            }`}
+                                        >
+                                            {t.label}
+                                        </button>
+                                    );
+                                })}
+                            </div>
                             <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm">
                                 <button
                                     onClick={fitGraphView}
@@ -1886,6 +1942,12 @@ const scrollToSection = (sectionId: string) => {
                                             );
                                         }
                                     })()}
+                                </div>
+                            )}
+                            {graphData?.nodes?.length > 0 && filteredGraph.nodes.length === 0 && !isGraphLoading && (
+                                <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500">
+                                    <p className="text-sm">当前筛选条件下无可显示实体</p>
+                                    <p className="text-xs mt-2">可切换“概念/地点/组织/物品”或选择多个类型</p>
                                 </div>
                             )}
                             <div ref={graphContainer} className="w-full h-full" />
