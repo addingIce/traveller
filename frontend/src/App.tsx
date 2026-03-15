@@ -157,6 +157,39 @@ const getSessionId = () => {
 // Persisted session ID (supports cross-device resume via ?sid=xxx)
 const sessionId = getSessionId();
 
+type StorySegmentType = 'narration' | 'dialogue' | 'thought' | 'system';
+type StorySegment = { type: StorySegmentType; text: string };
+
+const parseStorySegments = (storyText: string): StorySegment[] => {
+    if (!storyText) return [];
+    const lines = storyText.split('\n');
+    const segments: StorySegment[] = [];
+    const tagMap: Record<string, StorySegmentType> = {
+        "旁白": "narration",
+        "对白": "dialogue",
+        "心理": "thought",
+        "系统": "system"
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        const match = trimmed.match(/^\[(旁白|对白|心理|系统)\]\s*(.*)$/);
+        if (match) {
+            const segType = tagMap[match[1]] || "narration";
+            const segText = match[2] || "";
+            if (segText) {
+                segments.push({ type: segType, text: segText });
+            }
+        } else {
+            // Default to narration if no tag is present
+            segments.push({ type: "narration", text: trimmed });
+        }
+    }
+
+    return segments;
+};
+
 interface ModalConfig {
     show: boolean;
     type: 'info' | 'success' | 'warning' | 'error';
@@ -175,6 +208,8 @@ const App: React.FC = () => {
     const [isGraphLoading, setIsGraphLoading] = useState(false);
     const [chatInput, setChatInput] = useState("");
     const [isChatting, setIsChatting] = useState(false);
+    const [inputMode, setInputMode] = useState<'free' | 'act' | 'say' | 'think'>('free');
+    const [ambientPulse, setAmbientPulse] = useState(false);
     
     // Search & Selection State
     const [searchInput, setSearchInput] = useState("");
@@ -1164,7 +1199,13 @@ const scrollToSection = (sectionId: string) => {
             return;
         }
 
-        const userMessage = chatInput.trim();
+        const rawInput = chatInput.trim();
+        let userMessage = rawInput;
+        if (inputMode === 'act' && !rawInput.startsWith('/act ')) {
+            userMessage = `/act ${rawInput}`;
+        } else if (inputMode === 'say' && !rawInput.startsWith('/say ')) {
+            userMessage = `/say ${rawInput}`;
+        }
         setHistory(prev => [...prev, { type: 'user', content: userMessage }]);
         setChatInput("");
         setIsChatting(true);
@@ -1177,6 +1218,10 @@ const scrollToSection = (sectionId: string) => {
             // If the action caused a long-term change, refresh our graph quietly
             if (aiResponse.world_impact.world_state_changed) {
                 loadGraph();
+                setAmbientPulse(true);
+                setTimeout(() => setAmbientPulse(false), 1500);
+                const reason = aiResponse.world_impact.reason || "世界线产生变化";
+                showAlert('世界线变化', reason, 'info');
             }
 
             // Milestone: reached waypoints (M3)
@@ -1853,7 +1898,12 @@ const scrollToSection = (sectionId: string) => {
                         </div>
 
                         {/* Chat/Story Body */}
-                        <div className="relative flex flex-col flex-1 bg-black/20 overflow-hidden" style={{ display: activeTab === 'plot' ? 'flex' : 'none' }}>
+                        <div
+                            className={`relative flex flex-col flex-1 overflow-hidden transition-colors duration-700 ${
+                                ambientPulse ? 'bg-emerald-500/10' : 'bg-black/20'
+                            }`}
+                            style={{ display: activeTab === 'plot' ? 'flex' : 'none' }}
+                        >
                             {/* Original Storyline Timeline */}
                             <div className="border-b border-white/5 bg-slate-800/20 p-4">
                                 <div className="flex items-center justify-between mb-3">
@@ -1930,8 +1980,22 @@ const scrollToSection = (sectionId: string) => {
 
                                                 {/* 核心叙事描述 */}
                                                 <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-sm p-5 space-y-4 group/msg relative">
-                                                    <div className="text-slate-300 leading-relaxed whitespace-pre-wrap font-serif tracking-wide text-[15px]">
-                                                        {msg.story_text}
+                                                    <div className="space-y-3">
+                                                        {parseStorySegments(msg.story_text).map((seg, idx) => {
+                                                            const baseClass = "leading-relaxed whitespace-pre-wrap text-[15px]";
+                                                            const typeClass = seg.type === 'dialogue'
+                                                                ? "text-sky-200"
+                                                                : seg.type === 'thought'
+                                                                    ? "text-indigo-200 italic"
+                                                                    : seg.type === 'system'
+                                                                        ? "text-amber-300 text-xs uppercase tracking-wider"
+                                                                        : "text-slate-300 font-serif";
+                                                            return (
+                                                                <div key={`${i}-${idx}`} className={`${baseClass} ${typeClass}`}>
+                                                                    {seg.text}
+                                                                </div>
+                                                            );
+                                                        })}
                                                     </div>
 
                                                     {/* Bookmark Button */}
@@ -2002,6 +2066,48 @@ const scrollToSection = (sectionId: string) => {
 
                             {/* Input Area */}
                             <div className="p-4 bg-slate-800/80 border-t border-white/10 backdrop-blur-lg z-20">
+                                <div className="max-w-4xl mx-auto mb-2 flex items-center justify-between">
+                                    <div className="flex gap-2 text-[10px] font-bold uppercase tracking-widest">
+                                        <button
+                                            onClick={() => setInputMode('free')}
+                                            className={`px-3 py-1 rounded-full border transition-all ${
+                                                inputMode === 'free' ? 'bg-white/10 border-slate-400 text-slate-200' : 'border-white/10 text-slate-500 hover:text-white'
+                                            }`}
+                                        >
+                                            自由
+                                        </button>
+                                        <button
+                                            onClick={() => setInputMode('act')}
+                                            className={`px-3 py-1 rounded-full border transition-all ${
+                                                inputMode === 'act' ? 'bg-amber-500/20 border-amber-400 text-amber-200' : 'border-white/10 text-slate-500 hover:text-white'
+                                            }`}
+                                        >
+                                            动作
+                                        </button>
+                                        <button
+                                            onClick={() => setInputMode('say')}
+                                            className={`px-3 py-1 rounded-full border transition-all ${
+                                                inputMode === 'say' ? 'bg-sky-500/20 border-sky-400 text-sky-200' : 'border-white/10 text-slate-500 hover:text-white'
+                                            }`}
+                                        >
+                                            对白
+                                        </button>
+                                        <button
+                                            onClick={() => setInputMode('think')}
+                                            className={`px-3 py-1 rounded-full border transition-all ${
+                                                inputMode === 'think' ? 'bg-indigo-500/20 border-indigo-400 text-indigo-200' : 'border-white/10 text-slate-500 hover:text-white'
+                                            }`}
+                                        >
+                                            心理
+                                        </button>
+                                    </div>
+                                    <div className="text-[10px] text-slate-500">
+                                        {inputMode === 'act' && '将以 /act 前缀发送'}
+                                        {inputMode === 'say' && '将以 /say 前缀发送'}
+                                        {inputMode === 'think' && '作为内心独白推演'}
+                                        {inputMode === 'free' && '自由输入'}
+                                    </div>
+                                </div>
                                 <form
                                     onSubmit={(e) => { e.preventDefault(); handleSendChat(); }}
                                     className="flex gap-3 max-w-4xl mx-auto items-center relative"
@@ -2015,7 +2121,13 @@ const scrollToSection = (sectionId: string) => {
                                             isCurrentSessionRoot 
                                                 ? "原始剧情线不可编辑，请创建平行宇宙进行剧情推演..."
                                                 : isNovelReady 
-                                                    ? "执行动作 / 说出对白 / 心中暗想..." 
+                                                    ? (inputMode === 'act' 
+                                                        ? "执行动作..."
+                                                        : inputMode === 'say'
+                                                            ? "说出对白..."
+                                                            : inputMode === 'think'
+                                                                ? "心中暗想..."
+                                                                : "执行动作 / 说出对白 / 心中暗想...")
                                                     : "作品尚未就绪，无法进行剧情推演..."
                                         }
                                         className={`flex-1 border rounded-full px-6 py-4 text-white focus:outline-none transition-colors shadow-inner ${

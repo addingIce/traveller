@@ -54,6 +54,16 @@ async def chat_interact(req: ChatRequest, request: Request):
         
         # 5. 回填意图摘要 (保持向后兼容)
         ai_data["user_intent_summary"] = intent
+        
+        # 5.1 异常回收日志
+        try:
+            ui_hints = ai_data.get("ui_hints", []) or []
+            if "format_mismatch_fallback" in ui_hints:
+                print(f"[WARNING] Director output format mismatch fallback: session={req.session_id}")
+            if "system_error" in ui_hints:
+                print(f"[ERROR] Director system error fallback: session={req.session_id}")
+        except Exception:
+            pass
 
         # 6. 将玩家输入和 AI 响应存入 Zep
         user_msg = Message(role="user", role_type="user", content=req.message)

@@ -2,6 +2,7 @@ import asyncio
 import httpx
 import uuid
 import json
+import time
 import sys
 import os
 
@@ -55,7 +56,7 @@ async def test_sessions_flow():
             print(f"Error in Step 3: {e}")
             return
 
-        print("--- Step 4: Chat interact ---")
+        print("--- Step 4: Chat interact (single) ---")
         try:
             chat_payload = {
                 "session_id": session_id,
@@ -68,6 +69,36 @@ async def test_sessions_flow():
             print(f"AI response: {chat_resp['story_text'][:50]}...")
         except Exception as e:
             print(f"Error in Step 4: {e}")
+
+        print("--- Step 4.1: 50-turn stability check ---")
+        failures = 0
+        latencies = []
+        for i in range(50):
+            msg = f"第{i+1}轮：我继续探索当前场景。"
+            payload = {
+                "session_id": session_id,
+                "novel_id": novel_id,
+                "message": msg
+            }
+            start = time.perf_counter()
+            try:
+                resp = await client.post(f"{BASE_URL}/chat/interact", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                if not data.get("story_text"):
+                    failures += 1
+                    print(f"[FAIL] Round {i+1}: empty story_text")
+                latencies.append(time.perf_counter() - start)
+            except Exception as e:
+                failures += 1
+                print(f"[FAIL] Round {i+1}: {e}")
+
+        if latencies:
+            avg_latency = sum(latencies) / len(latencies)
+            p95_latency = sorted(latencies)[int(len(latencies) * 0.95) - 1]
+            print(f"50-turn summary: failures={failures}, avg_latency={avg_latency:.2f}s, p95_latency={p95_latency:.2f}s")
+        else:
+            print("50-turn summary: no successful responses")
 
         print("--- Step 5: List sessions ---")
         try:

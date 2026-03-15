@@ -260,6 +260,13 @@ class DirectorAI:
         3. **宁缺毋滥**：如果不确定剧情是否已经推演到该路标，不要将其加入 `reached_waypoints`。
         4. **禁止重复**：已在“已达成路标”列表中的点，严禁再次出现在 `reached_waypoints` 中。
 
+        ## Story Text 格式要求:
+        - 请使用分段标签标注叙事类型，每段以标签开头。
+        - 标签可用：[旁白]、[对白]、[心理]、[系统]
+        - 示例：
+          [旁白] 夜色沉沉，城门紧闭。
+          [对白] 你低声说：“这里不对劲。”
+
         ## Joint Output Protocol (JOP) - JSON Schema:
         请严格按以下 JSON 结构输出：
         {{
