@@ -1,12 +1,15 @@
 import os
 import json
 import re
+import asyncio
+import uuid
 from datetime import datetime
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 from openai import AsyncOpenAI
 from zep_python import Message
+import httpx
 
 router = APIRouter()
 
@@ -14,6 +17,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
 MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "gpt-4o")
 MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
+GRAPHITI_API_URL = os.getenv("GRAPHITI_API_URL", "http://localhost:8003")
 
 from app.services.director_service import ActionParser, ContextAssembler, DirectorAI
 from app.models.schemas import ChatRequest, ChatResponse, DirectorMode
@@ -23,6 +27,36 @@ def get_aclient():
     key = os.getenv("OPENAI_API_KEY", "")
     url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     return AsyncOpenAI(api_key=key, base_url=url)
+
+async def _send_world_impact_to_graphiti(session_id: str, reason: str, story_text: str) -> None:
+    if not session_id:
+        return
+    message_uuid = str(uuid.uuid4())
+    payload = {
+        "group_id": session_id,
+        "messages": [
+            {
+                "content": f"世界状态变化：{reason}\n剧情摘要：{story_text[:240]}",
+                "uuid": message_uuid,
+                "role_type": "system",
+                "role": "world_impact",
+                "name": "World Impact",
+                "source_description": "world_impact",
+            }
+        ],
+    }
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(f"{GRAPHITI_API_URL}/messages", json=payload)
+            if resp.status_code >= 400:
+                print(f"[WARNING] Graphiti world_impact ingest failed: {resp.status_code} {resp.text}")
+            else:
+                print(
+                    "[INFO] Graphiti world_impact ingested: "
+                    f"session={session_id} uuid={message_uuid} status={resp.status_code}"
+                )
+    except Exception as e:
+        print(f"[WARNING] Graphiti world_impact ingest exception: {e}")
 
 @router.post("/interact", response_model=ChatResponse)
 async def chat_interact(req: ChatRequest, request: Request):
@@ -112,6 +146,9 @@ async def chat_interact(req: ChatRequest, request: Request):
             item = cache.get(req.novel_id) or {}
             item["dirty"] = True
             cache[req.novel_id] = item
+            reason = ai_data.get("world_impact", {}).get("reason") or "世界状态发生变化"
+            story_text = ai_data.get("story_text", "") or ""
+            asyncio.create_task(_send_world_impact_to_graphiti(req.session_id, reason, story_text))
 
         return ChatResponse(**ai_data)
 

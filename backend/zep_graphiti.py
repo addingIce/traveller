@@ -33,11 +33,24 @@ def _ensure_vectors(query, params):
             if isinstance(node, dict) and node.get('name_embedding') is None:
                 node['name_embedding'] = [0.1] * 1536
                 fixed = True
+            if isinstance(node, dict):
+                if node.get('source') is None:
+                    node['source'] = 'auto'
+                    fixed = True
+                if node.get('priority') is None:
+                    node['priority'] = 0
+                    fixed = True
     
     # Check for entity_data (single save)
     if 'entity_data' in params and isinstance(params['entity_data'], dict):
         if params['entity_data'].get('name_embedding') is None:
             params['entity_data']['name_embedding'] = [0.1] * 1536
+            fixed = True
+        if params['entity_data'].get('source') is None:
+            params['entity_data']['source'] = 'auto'
+            fixed = True
+        if params['entity_data'].get('priority') is None:
+            params['entity_data']['priority'] = 0
             fixed = True
             
     # Check for edges list (bulk edges)
@@ -46,12 +59,25 @@ def _ensure_vectors(query, params):
             if isinstance(edge, dict) and edge.get('fact_embedding') is None:
                 edge['fact_embedding'] = [0.1] * 1536
                 fixed = True
+            if isinstance(edge, dict):
+                if edge.get('source') is None:
+                    edge['source'] = 'auto'
+                    fixed = True
+                if edge.get('priority') is None:
+                    edge['priority'] = 0
+                    fixed = True
 
     # Direct check
     for k in ['name_embedding', 'fact_embedding']:
         if k in params and params[k] is None:
             params[k] = [0.1] * 1536
             fixed = True
+    if 'source' in params and params['source'] is None:
+        params['source'] = 'auto'
+        fixed = True
+    if 'priority' in params and params['priority'] is None:
+        params['priority'] = 0
+        fixed = True
     
     if fixed:
         print(f"!!! [PRINT] INJECTED VECTORS INTO QUERY: {query[:60]}...", flush=True)
@@ -205,6 +231,28 @@ class ZepGraphiti(Graphiti):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
+    async def mark_override(self, node_uuids: list[str], edge_uuids: list[str]) -> None:
+        if node_uuids:
+            async with self.driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (n:Entity)
+                    WHERE n.uuid IN $uuids
+                    SET n.source = 'override', n.priority = 10
+                    """,
+                    uuids=node_uuids,
+                )
+        if edge_uuids:
+            async with self.driver.session() as session:
+                await session.run(
+                    """
+                    MATCH ()-[r:RELATES_TO]->()
+                    WHERE r.uuid IN $uuids
+                    SET r.source = 'override', r.priority = 10
+                    """,
+                    uuids=edge_uuids,
+                )
+
     async def save_entity_node(self, name: str, uuid: str, group_id: str, summary: str = ''):
         new_node = EntityNode(
             name=name,
@@ -223,6 +271,11 @@ class ZepGraphiti(Graphiti):
             uuid_val = kwargs.get('uuid') # Corrected from `uuid_val = uuid_`
             print(f"!!! [PRINT] CALLING SUPER.add_episode for {uuid_val}", flush=True)
             res = await super().add_episode(*args, **kwargs)
+            source_description = kwargs.get('source_description') or getattr(res.episode, 'source_description', '')
+            if isinstance(source_description, str) and "world_impact" in source_description:
+                node_uuids = [n.uuid for n in res.nodes if getattr(n, "uuid", None)]
+                edge_uuids = [e.uuid for e in res.edges if getattr(e, "uuid", None)]
+                await self.mark_override(node_uuids, edge_uuids)
             print(f"!!! [PRINT] SUPER.add_episode SUCCESS for {uuid_val}", flush=True)
             return res
         except Exception as e:
