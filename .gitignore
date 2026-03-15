@@ -26,6 +26,7 @@ frontend.log
 # Zep/Docker
 data/db
 data/zep
+data/novels/
 
 # Config files with secrets
 backend/app/config.yaml
