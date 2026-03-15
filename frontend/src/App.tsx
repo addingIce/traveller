@@ -1272,8 +1272,6 @@ const scrollToSection = (sectionId: string) => {
                 loadGraph();
                 setAmbientPulse(true);
                 setTimeout(() => setAmbientPulse(false), 1500);
-                const reason = aiResponse.world_impact.reason || "世界线产生变化";
-                showAlert('世界线变化', reason, 'info');
             }
 
             // Milestone: reached waypoints (M3)
