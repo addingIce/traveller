@@ -8,6 +8,7 @@ from graphiti_core.nodes import EpisodeType  # type: ignore
 from graphiti_core.utils.maintenance.graph_data_operations import clear_data  # type: ignore
 
 from graph_service.dto import AddEntityNodeRequest, AddMessagesRequest, Message, Result
+from pydantic import BaseModel
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
@@ -37,6 +38,35 @@ class AsyncWorker:
 
 
 async_worker = AsyncWorker()
+
+
+class _Person(BaseModel):
+    """人物"""
+
+
+class _Place(BaseModel):
+    """地点"""
+
+
+class _Organization(BaseModel):
+    """组织"""
+
+
+class _Item(BaseModel):
+    """物品"""
+
+
+class _Concept(BaseModel):
+    """概念"""
+
+
+ENTITY_TYPES = {
+    "人物": _Person,
+    "地点": _Place,
+    "组织": _Organization,
+    "物品": _Item,
+    "概念": _Concept,
+}
 
 
 @asynccontextmanager
@@ -100,6 +130,7 @@ async def add_messages(
                     reference_time=m.timestamp or utc_now(),
                     source=EpisodeType.message,
                     source_description=m.source_description or "Zep Ingest",
+                    entity_types=ENTITY_TYPES,
                 )
                 print(f"Episode processed successfully: {m.uuid}")
         except Exception as e:

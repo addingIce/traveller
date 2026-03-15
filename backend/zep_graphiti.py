@@ -529,6 +529,18 @@ class ResilientOpenAIClient(OpenAIClient):
                 if 'entity_type_id' not in new_dict:
                     logger.warning(f"Adding missing entity_type_id to entity: {new_dict.get('name', 'unknown')}")
                     new_dict['entity_type_id'] = 0
+                else:
+                    try:
+                        entity_type_id = int(new_dict['entity_type_id'])
+                    except (TypeError, ValueError):
+                        entity_type_id = 0
+                    if entity_type_id < 0 or entity_type_id > 5:
+                        logger.warning(
+                            f"Out-of-range entity_type_id ({new_dict['entity_type_id']}) for entity: "
+                            f"{new_dict.get('name', 'unknown')} - resetting to 0"
+                        )
+                        entity_type_id = 0
+                    new_dict['entity_type_id'] = entity_type_id
             
             # 修复 TypeError: duplicate_fact_id 类型错误
             # 如果 duplicate_fact_id 是列表，转换为整数

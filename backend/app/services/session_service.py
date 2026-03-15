@@ -578,6 +578,14 @@ class SessionService:
         print(f"[DEBUG] get_session_waypoints: session_id={session_id}")
         try:
             async with self.neo4j.session() as session:
+                # 若没有任何 Waypoint 节点，直接返回，避免 UnknownPropertyKeyWarning
+                count_result = await session.run(
+                    "MATCH (w:Waypoint) RETURN count(w) as count"
+                )
+                count_record = await count_result.single()
+                if count_record and (count_record.get("count") or 0) == 0:
+                    return []
+
                 query = """
                 MATCH (s:Session {uuid: $sid})
                 MATCH (n:Novel)-[:HAS_SESSION]->(s)
