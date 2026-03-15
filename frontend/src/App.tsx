@@ -1988,6 +1988,7 @@ const scrollToSection = (sectionId: string) => {
                                                 <div className="flex gap-2 text-[10px] font-mono tracking-widest pl-1">
                                                     {msg.user_intent_summary?.action && <span className="text-amber-400/80 bg-amber-400/10 px-2 py-0.5 border border-amber-400/20 rounded-md">ACTION PARSED</span>}
                                                     {msg.user_intent_summary?.thought && <span className="text-indigo-400/80 bg-indigo-400/10 px-2 py-0.5 border border-indigo-400/20 rounded-md">THOUGHT PARSED</span>}
+                                                    {msg.ui_hints?.includes('combat_event') && <span className="text-red-400/80 bg-red-400/10 px-2 py-0.5 border border-red-400/20 rounded-md">COMBAT EVENT</span>}
                                                     {msg.world_impact?.world_state_changed && <span className="text-emerald-400/80 bg-emerald-400/10 px-2 py-0.5 border border-emerald-400/20 rounded-md">WORLD IMPACT OCCURRED</span>}
                                                 </div>
 

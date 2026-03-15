@@ -55,6 +55,16 @@ async def chat_interact(req: ChatRequest, request: Request):
         # 5. 回填意图摘要 (保持向后兼容)
         ai_data["user_intent_summary"] = intent
         
+        # 5.05 combat_event 映射（不新增字段）
+        try:
+            if intent.get("metadata", {}).get("combat"):
+                ui_hints = ai_data.get("ui_hints") or []
+                if "combat_event" not in ui_hints:
+                    ui_hints.append("combat_event")
+                ai_data["ui_hints"] = ui_hints
+        except Exception:
+            pass
+        
         # 5.1 异常回收日志
         try:
             ui_hints = ai_data.get("ui_hints", []) or []

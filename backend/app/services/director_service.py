@@ -16,9 +16,11 @@ class ActionParser:
         """精细化解析玩家意图：区分动作、对话和心理，并提取关键词"""
         # 1. 快捷指令处理
         if user_input.startswith("/act "):
-            return {"action": user_input[5:].strip(), "dialogue": None, "thought": None, "metadata": {"manual": True}}
+            action_text = user_input[5:].strip()
+            combat = bool(re.search(r"(攻击|战斗|施法|法术|挥剑|射击|格挡|冲刺|斩|刺|砍|踢|射箭|招式|技能)", action_text))
+            return {"action": action_text, "dialogue": None, "thought": None, "metadata": {"manual": True, "combat": combat}}
         if user_input.startswith("/say "):
-            return {"action": None, "dialogue": user_input[5:].strip(), "thought": None, "metadata": {"manual": True}}
+            return {"action": None, "dialogue": user_input[5:].strip(), "thought": None, "metadata": {"manual": True, "combat": False}}
 
         # 2. LLM 解析
         system_prompt = """
@@ -46,10 +48,12 @@ class ActionParser:
             
             content = response.choices[0].message.content
             parsed = json.loads(content)
-            parsed["metadata"] = {"manual": False}
+            action_text = (parsed.get("action") or "").strip()
+            combat = bool(re.search(r"(攻击|战斗|施法|法术|挥剑|射击|格挡|冲刺|斩|刺|砍|踢|射箭|招式|技能)", action_text))
+            parsed["metadata"] = {"manual": False, "combat": combat}
             return parsed
         except Exception:
-            return {"action": None, "dialogue": user_input, "thought": None, "intensity": 3, "metadata": {"fallback": True}}
+            return {"action": None, "dialogue": user_input, "thought": None, "intensity": 3, "metadata": {"fallback": True, "combat": False}}
 
 class SafetyGuard:
     @staticmethod
@@ -280,6 +284,14 @@ class DirectorAI:
         - 当前剧情出现停滞，请在本轮叙事中引入一个合理的“突发事件”或“外部压力”。
         - 事件必须符合世界观与角色动机，不要直白暴露系统指令。
         """
+        
+        combat_block = ""
+        if intent.get("metadata", {}).get("combat"):
+            combat_block = """
+        ## 战斗叙事要求:
+        - 本轮必须体现明确的战斗进程（冲突升级、反制、受伤或战果之一）。
+        - 战斗描写需符合世界观与角色能力，不要脱离逻辑。
+        """
 
         system_prompt = f"""
         # Role: 穿越者引擎导演 (Director AI)
@@ -294,6 +306,7 @@ class DirectorAI:
         - 历史摘要: {context['session_summary']}
         {start_chapter_block}
         {pacing_block}
+        {combat_block}
         
         ## Waypoint Trigger Rules (判定准则):
         1. **增量判定**：只有当玩家当前的动作或你生成的剧情剧情中，**新发生**了符合路标描述的事件时，才判定为“达成”。

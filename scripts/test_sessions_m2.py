@@ -42,10 +42,12 @@ async def test_sessions_flow():
         print("--- Step 3: Create session ---")
         try:
             user_id = f"test_user_{uuid.uuid4().hex[:6]}"
+            start_chapter_id = chapters[0]["id"] if chapters else None
             session_payload = {
                 "novel_id": novel_id,
                 "user_id": user_id,
-                "session_name": "我的平行宇宙"
+                "session_name": "我的平行宇宙",
+                "start_chapter_id": start_chapter_id
             }
             resp = await client.post(f"{BASE_URL}/sessions", json=session_payload)
             resp.raise_for_status()
@@ -109,7 +111,53 @@ async def test_sessions_flow():
         except Exception as e:
             print(f"Error in Step 5: {e}")
 
-    print("--- Testing Complete ---")
+        print("--- Testing Complete ---")
+
+        print("--- Step 6: Branch flow check ---")
+        try:
+            # Create a bookmark
+            bm_payload = {"name": "回归检查书签"}
+            resp = await client.post(f"{BASE_URL}/sessions/{session_id}/bookmark", json=bm_payload)
+            resp.raise_for_status()
+            bookmark = resp.json()
+            bookmark_id = bookmark["id"]
+            print(f"Created bookmark: {bookmark_id}")
+
+            # Branch from bookmark
+            branch_payload = {"bookmark_id": bookmark_id, "new_session_name": "回归分支A"}
+            resp = await client.post(f"{BASE_URL}/sessions/{session_id}/branch", json=branch_payload)
+            resp.raise_for_status()
+            branch_session = resp.json()
+            branch_session_id = branch_session["session_id"]
+            print(f"Branched session: {branch_session_id}")
+
+            # Re-branch from the new session
+            resp = await client.post(f"{BASE_URL}/sessions/{branch_session_id}/bookmark", json={"name": "二级书签"})
+            resp.raise_for_status()
+            bookmark2 = resp.json()
+            branch_payload2 = {"bookmark_id": bookmark2["id"], "new_session_name": "回归分支B"}
+            resp = await client.post(f"{BASE_URL}/sessions/{branch_session_id}/branch", json=branch_payload2)
+            resp.raise_for_status()
+            branch_session2 = resp.json()
+            print(f"Re-branched session: {branch_session2['session_id']}")
+        except Exception as e:
+            print(f"Error in Step 6: {e}")
+
+        print("--- Step 7: A/B mode switching check ---")
+        try:
+            for mode in ["SANDBOX", "CONVERGENCE"]:
+                payload = {
+                    "session_id": session_id,
+                    "novel_id": novel_id,
+                    "message": f"模式测试：{mode}。",
+                    "mode": mode
+                }
+                resp = await client.post(f"{BASE_URL}/chat/interact", json=payload)
+                resp.raise_for_status()
+                data = resp.json()
+                print(f"Mode {mode} ok, story_text_len={len(data.get('story_text',''))}")
+        except Exception as e:
+            print(f"Error in Step 7: {e}")
 
 if __name__ == "__main__":
     asyncio.run(test_sessions_flow())
