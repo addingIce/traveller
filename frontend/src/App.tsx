@@ -254,6 +254,7 @@ const App: React.FC = () => {
     const [isSessionsLoading, setIsSessionsLoading] = useState(false);
     const [chapters, setChapters] = useState<ChapterInfo[]>([]);
     const [isChaptersLoading, setIsChaptersLoading] = useState(false);
+    const [isTimelineExpanded, setIsTimelineExpanded] = useState(false);
     const [showBookmarkModal, setShowBookmarkModal] = useState(false);
     const [bookmarkName, setBookmarkName] = useState('');
     const [bookmarks, setBookmarks] = useState<any[]>([]);
@@ -437,6 +438,38 @@ const App: React.FC = () => {
             loadChapters();
         }
     }, [currentCollection]);
+
+    // Auto refresh chapters/status while the current novel is still processing/extracting
+    useEffect(() => {
+        if (!currentCollection) return;
+        if (!currentNovel) return;
+        if (!['processing', 'completed', 'extracting'].includes(currentNovel.status)) return;
+
+        let active = true;
+        const interval = setInterval(async () => {
+            try {
+                const status = await getNovelStatus(currentCollection);
+                if (!active) return;
+                setNovels(prev =>
+                    prev.map(n => n.collection_name === currentCollection ? { ...n, status: status.status } : n)
+                );
+                if (['completed', 'extracting', 'ready'].includes(status.status)) {
+                    loadChapters(currentCollection);
+                }
+                if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
+                    clearInterval(interval);
+                    await loadNovelsList();
+                }
+            } catch {
+                clearInterval(interval);
+            }
+        }, 4000);
+
+        return () => {
+            active = false;
+            clearInterval(interval);
+        };
+    }, [currentCollection, currentNovel?.status]);
 
     // Unified data loader for currentSessionId changes
     useEffect(() => {
@@ -722,7 +755,7 @@ const scrollToSection = (sectionId: string) => {
                 const status = await getNovelStatus(collectionName);
                 // 只在状态首次变为 completed/extracting/ready 时调用 loadChapters
                 if (['completed', 'extracting', 'ready'].includes(status.status) && lastStatus !== status.status) {
-                    loadChapters();
+                    loadChapters(collectionName);
                 }
                 lastStatus = status.status;
                 if (TERMINAL_NOVEL_STATUSES.has(status.status)) {
@@ -811,12 +844,15 @@ const scrollToSection = (sectionId: string) => {
         }
     };
 
-    const loadChapters = async () => {
-        if (!currentCollection) return;
+    const loadChapters = async (collectionName?: string) => {
+        const targetCollection = collectionName || currentCollection;
+        if (!targetCollection) return;
         setIsChaptersLoading(true);
         try {
-            const data = await getChapters(currentCollection);
-            setChapters(data);
+            const data = await getChapters(targetCollection);
+            if (targetCollection === currentCollection) {
+                setChapters(data);
+            }
         } catch (e) {
             console.error("加载章节失败", e);
         } finally {
@@ -1961,44 +1997,54 @@ const scrollToSection = (sectionId: string) => {
                             style={{ display: activeTab === 'plot' ? 'flex' : 'none' }}
                         >
                             {/* Original Storyline Timeline */}
-                            <div className="border-b border-white/5 bg-slate-800/20 p-4">
-                                <div className="flex items-center justify-between mb-3">
-                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                                        <History className="w-3 h-3" /> 原始剧情时间线
-                                    </h3>
-                                    <span className="text-[10px] text-slate-600">{chapters.length} 个章节已载入</span>
+                            <div className="border-b border-white/5 bg-slate-800/20 px-4 py-3">
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-3">
+                                        <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                                            <History className="w-3 h-3" /> 原始剧情时间线
+                                        </h3>
+                                        <span className="text-[10px] text-slate-600">{chapters.length} 个章节已载入</span>
+                                    </div>
+                                    <button
+                                        onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
+                                        className="text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-200 transition"
+                                    >
+                                        {isTimelineExpanded ? '收起' : '展开'}
+                                    </button>
                                 </div>
-                                <div className="flex gap-4 overflow-x-auto pb-2 custom-scrollbar no-scrollbar">
-                                    {isChaptersLoading ? (
-                                        <Loader2 className="w-4 h-4 animate-spin opacity-50" />
-                                    ) : chapters.length === 0 ? (
-                                        <p className="text-[10px] text-slate-600">暂无捕捉到明显章节结构</p>
-                                    ) : (
-                                        chapters.map((ch) => (
-                                            <div 
-                                                key={ch.id} 
-                                                className="min-w-[180px] group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/30 rounded-xl p-3 transition-all cursor-pointer relative"
-                                            >
-                                                <div className="text-xs font-medium text-sky-400 truncate mb-1">{ch.title}</div>
-                                                <div className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
-                                                    {ch.content_preview}
-                                                </div>
-                                                <button 
-                                                    onClick={(e) => {
-                                                        e.stopPropagation();
-                                                        setStartChapterId(ch.id);
-                                                        setStartChapterTitle(ch.title);
-                                                        setNewSessionName(`基于: ${ch.title}`);
-                                                        setShowNewSessionModal(true);
-                                                    }}
-                                                    className="absolute inset-0 bg-sky-500/80 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-all"
+                                {isTimelineExpanded && (
+                                    <div className="mt-3 flex gap-4 overflow-x-auto pb-2 custom-scrollbar no-scrollbar overscroll-x-contain snap-x snap-mandatory">
+                                        {isChaptersLoading ? (
+                                            <Loader2 className="w-4 h-4 animate-spin opacity-50" />
+                                        ) : chapters.length === 0 ? (
+                                            <p className="text-[10px] text-slate-600">暂无捕捉到明显章节结构</p>
+                                        ) : (
+                                            chapters.map((ch) => (
+                                                <div 
+                                                    key={ch.id} 
+                                                    className="w-56 shrink-0 snap-start group bg-white/5 hover:bg-white/10 border border-white/5 hover:border-sky-500/30 rounded-xl p-3 transition-all cursor-pointer relative"
                                                 >
-                                                    从本章开启平行宇宙
-                                                </button>
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
+                                                    <div className="text-xs font-medium text-sky-400 truncate mb-1">{ch.title}</div>
+                                                    <div className="text-[10px] text-slate-500 line-clamp-2 leading-relaxed">
+                                                        {ch.content_preview}
+                                                    </div>
+                                                    <button 
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            setStartChapterId(ch.id);
+                                                            setStartChapterTitle(ch.title);
+                                                            setNewSessionName(`基于: ${ch.title}`);
+                                                            setShowNewSessionModal(true);
+                                                        }}
+                                                        className="absolute inset-0 bg-sky-500/80 text-white text-[10px] font-bold opacity-0 group-hover:opacity-100 flex items-center justify-center rounded-xl transition-all"
+                                                    >
+                                                        从本章开启平行宇宙
+                                                    </button>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             
                             <div className="flex-1 overflow-y-auto p-6 space-y-6 flex flex-col">
