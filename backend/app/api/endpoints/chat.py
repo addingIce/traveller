@@ -47,7 +47,7 @@ async def chat_interact(req: ChatRequest, request: Request):
         intent = await parser.parse_intent(sanitized_message)
         
         # 3. 装配上下文 (Context Assembly)
-        context = await assembler.assemble(req.session_id, req.novel_id)
+        context = await assembler.assemble(req.session_id, req.novel_id, intent)
 
         # 4. 生成剧情 (Story Generation)
         ai_data = await director.generate(context, intent, req.mode or DirectorMode.SANDBOX)

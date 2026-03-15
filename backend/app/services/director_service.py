@@ -80,7 +80,7 @@ class ContextAssembler:
         self.zep = zep_client
         self.neo4j = neo4j_driver
 
-    async def assemble(self, session_id: str, novel_id: str) -> Dict[str, Any]:
+    async def assemble(self, session_id: str, novel_id: str, current_intent: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """组装全量上下文：玩家记忆 + 小说背景 + 实体逻辑"""
         context = {
             "session_history": "",
@@ -90,7 +90,8 @@ class ContextAssembler:
             "waypoints": [],
             "start_chapter_id": None,
             "start_chapter_title": None,
-            "start_chapter_preview": None
+            "start_chapter_preview": None,
+            "pacing_needed": False
         }
 
         # 0. Fetch Session Metadata for Branching Context
@@ -137,6 +138,37 @@ class ContextAssembler:
             print(f"[DEBUG] ContextAssembler: Novel background fetch failed: {e}")
         try:
             async with self.neo4j.session() as session:
+                # 2.5 读取并更新节奏状态（最近3轮 action 是否有效）
+                last_intents: List[bool] = []
+                try:
+                    pacing_result = await session.run(
+                        "MATCH (s:Session {uuid: $sid}) RETURN s.last_intents as last_intents",
+                        sid=session_id
+                    )
+                    pacing_record = await pacing_result.single()
+                    if pacing_record and pacing_record.get("last_intents"):
+                        last_intents = list(pacing_record["last_intents"])
+                except Exception as pacing_err:
+                    print(f"[DEBUG] ContextAssembler: pacing fetch failed: {pacing_err}")
+
+                if current_intent is not None:
+                    action_text = (current_intent.get("action") or "").strip()
+                    low_info_patterns = r"(闲聊|观望|等待|发呆|无所事事|看看|打量|观察四周)"
+                    action_present = bool(action_text) and not re.search(low_info_patterns, action_text)
+                    last_intents.append(action_present)
+                    last_intents = last_intents[-3:]
+                    try:
+                        await session.run(
+                            "MATCH (s:Session {uuid: $sid}) SET s.last_intents = $last_intents",
+                            sid=session_id,
+                            last_intents=last_intents
+                        )
+                    except Exception as pacing_write_err:
+                        print(f"[DEBUG] ContextAssembler: pacing write failed: {pacing_write_err}")
+
+                if len(last_intents) >= 3 and all(v is False for v in last_intents[-3:]):
+                    context["pacing_needed"] = True
+
                 # 3. 获取相关实体
                 query = """
                 MATCH (e:Entity {group_id: $novel_id})
@@ -241,6 +273,14 @@ class DirectorAI:
         - 起始章节摘要: {start_chapter_preview}
         """
 
+        pacing_block = ""
+        if mode != "SANDBOX" and context.get("pacing_needed"):
+            pacing_block = """
+        ## 节奏控制指令:
+        - 当前剧情出现停滞，请在本轮叙事中引入一个合理的“突发事件”或“外部压力”。
+        - 事件必须符合世界观与角色动机，不要直白暴露系统指令。
+        """
+
         system_prompt = f"""
         # Role: 穿越者引擎导演 (Director AI)
         
@@ -253,6 +293,7 @@ class DirectorAI:
         - {waypoint_label}: {"; ".join(context['waypoints'])}
         - 历史摘要: {context['session_summary']}
         {start_chapter_block}
+        {pacing_block}
         
         ## Waypoint Trigger Rules (判定准则):
         1. **增量判定**：只有当玩家当前的动作或你生成的剧情剧情中，**新发生**了符合路标描述的事件时，才判定为“达成”。
@@ -322,6 +363,14 @@ class DirectorAI:
                         if name:
                             cleaned.append(name)
                 parsed["reached_waypoints"] = cleaned
+
+            # 节奏控制触发：强制标记 world_impact
+            if mode != "SANDBOX" and context.get("pacing_needed"):
+                world_impact = parsed.get("world_impact") or {}
+                world_impact["world_state_changed"] = True
+                if not world_impact.get("reason"):
+                    world_impact["reason"] = "节奏事件触发"
+                parsed["world_impact"] = world_impact
                 
             return parsed
         except Exception as e:
