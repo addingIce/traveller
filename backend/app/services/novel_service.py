@@ -24,7 +24,6 @@ def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 2
     chunks = []
     
     # 章节标题正则：第X章/节/回/部/卷，必须独立成行（前后为换行或文本边界）
-    # 使用多行模式，^ 匹配行首
     chapter_pattern = r'(^|\n)(第[一二三四五六七八九十百千万零\d]+[章节回部卷][^\n]*)'
     
     # 按章节分割
@@ -56,9 +55,13 @@ def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 2
                 # 保存上一章节
                 if current_chapter:
                     chunks.extend(_split_long_chunk(current_chapter, min_length, max_length))
-                current_chapter = part.strip() + "\n\n"
+                current_chapter = part.strip()  # 不添加 \n\n，让标题和内容自然连接
             else:
-                current_chapter += part.strip()
+                # 内容部分：添加换行后连接到 current_chapter
+                if current_chapter:
+                    current_chapter += "\n" + part.strip()
+                else:
+                    current_chapter = part.strip()
             
             i += 1
         
@@ -73,10 +76,74 @@ def smart_chunk_content(content: str, min_length: int = 100, max_length: int = 2
 
 
 def _split_long_chunk(content: str, min_length: int, max_length: int) -> list[str]:
-    """将超长内容按段落和句子分割"""
+    """将超长内容按段落和句子分割，保持章节标题在开头"""
     if len(content) <= max_length:
         return [content] if len(content) >= min_length else []
+    
+    # 检查是否以章节标题开头
+    chapter_title_pattern = re.compile(r'^(第[一二三四五六七八九十百千万零\d]+[章节回部卷][^\n]*)')
+    title_match = chapter_title_pattern.match(content)
+    chapter_title = title_match.group(1) if title_match else None
+    
+    # 如果有章节标题，从内容中分离出来
+    if chapter_title:
+        content_without_title = content[len(chapter_title):].lstrip('\n')
+        return _split_by_paragraphs_with_title(content_without_title, chapter_title, min_length, max_length)
+    
     return _split_by_paragraphs(content, min_length, max_length)
+
+
+def _split_by_paragraphs_with_title(content: str, title: str, min_length: int, max_length: int) -> list[str]:
+    """按段落分割，确保每个chunk都以章节标题开头"""
+    chunks = []
+    paragraphs = re.split(r'\n\s*\n', content)
+    current_chunk = ""
+    
+    for para in paragraphs:
+        para = para.strip()
+        if not para:
+            continue
+        
+        # 预留标题的空间
+        available_length = max_length - len(title) - 1
+        
+        if len(current_chunk) + len(para) + 2 <= available_length:
+            current_chunk += (("\n" if current_chunk else "") + para)
+        else:
+            # 保存当前 chunk（添加标题前缀）
+            if current_chunk:
+                chunks.append(title + "\n" + current_chunk)
+            
+            # 处理超长段落
+            if len(para) > available_length:
+                # 按句子分割
+                sentences = _split_sentences(para)
+                if any(len(s) > available_length for s in sentences):
+                    sub_chunks = _split_by_characters(para, min_length - len(title) - 1, available_length)
+                    for sub in sub_chunks:
+                        chunks.append(title + "\n" + sub)
+                    current_chunk = ""
+                else:
+                    temp_chunk = ""
+                    for sentence in sentences:
+                        sentence = sentence.strip()
+                        if not sentence:
+                            continue
+                        if len(temp_chunk) + len(sentence) + 1 <= available_length:
+                            temp_chunk += (sentence + "。")
+                        else:
+                            if temp_chunk:
+                                chunks.append(title + "\n" + temp_chunk.strip())
+                            temp_chunk = sentence + "。"
+                    current_chunk = temp_chunk.strip()
+            else:
+                current_chunk = para
+    
+    # 处理最后一个 chunk
+    if current_chunk:
+        chunks.append(title + "\n" + current_chunk)
+    
+    return chunks
 
 
 def _split_by_paragraphs(content: str, min_length: int, max_length: int) -> list[str]:
@@ -85,30 +152,49 @@ def _split_by_paragraphs(content: str, min_length: int, max_length: int) -> list
     paragraphs = re.split(r'\n\s*\n', content)  # 按空行分割
     current_chunk = ""
     
+    # 章节标题模式
+    chapter_title_pattern = re.compile(r'^第[一二三四五六七八九十百千万零\d]+[章节回部卷]')
+    
     for para in paragraphs:
         para = para.strip()
         if not para:
             continue
         
+        # 检查是否是章节标题（短且匹配章节模式）
+        is_chapter_title = len(para) < 50 and chapter_title_pattern.match(para)
+        
         # 如果当前段落加上新段落不超过限制，合并
         if len(current_chunk) + len(para) + 2 <= max_length:
             current_chunk += (("\n\n" if current_chunk else "") + para)
         else:
-            # 保存当前 chunk
+            # 保存当前 chunk（但如果是短标题，不要单独保存，而是作为新chunk的开头）
             if len(current_chunk) >= min_length:
-                chunks.append(current_chunk)
+                # 检查 current_chunk 是否只是章节标题
+                is_current_chapter_title = len(current_chunk) < 50 and chapter_title_pattern.match(current_chunk.strip())
+                if is_current_chapter_title:
+                    # 不单独保存标题，作为新chunk的开头
+                    pass
+                else:
+                    chunks.append(current_chunk)
             
             # 处理超长段落
             if len(para) > max_length:
+                # 如果有章节标题作为前缀，添加到内容前面
+                prefix = current_chunk + "\n\n" if current_chunk and len(current_chunk) < 50 and chapter_title_pattern.match(current_chunk.strip()) else ""
+                
                 # 先尝试按句子分割
                 sentences = _split_sentences(para)
                 
                 # 如果分割后仍有超长句子，按字符强制分割
                 if any(len(s) > max_length for s in sentences):
-                    chunks.extend(_split_by_characters(para, min_length, max_length))
+                    sub_chunks = _split_by_characters(para, min_length, max_length)
+                    if prefix and sub_chunks:
+                        # 将标题添加到第一个子chunk
+                        sub_chunks[0] = prefix + sub_chunks[0]
+                    chunks.extend(sub_chunks)
                     current_chunk = ""
                 else:
-                    temp_chunk = ""
+                    temp_chunk = prefix
                     for sentence in sentences:
                         sentence = sentence.strip()
                         if not sentence:
@@ -117,10 +203,11 @@ def _split_by_paragraphs(content: str, min_length: int, max_length: int) -> list
                             temp_chunk += (sentence + "。")
                         else:
                             if len(temp_chunk) >= min_length:
-                                chunks.append(temp_chunk)
+                                chunks.append(temp_chunk.strip())
                             temp_chunk = sentence + "。"
-                    current_chunk = temp_chunk
+                    current_chunk = temp_chunk.strip()
             else:
+                # 如果是章节标题，保留作为新chunk的开头
                 current_chunk = para
     
     # 处理最后一个 chunk

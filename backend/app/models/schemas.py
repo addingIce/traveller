@@ -66,6 +66,7 @@ class BranchRequest(BaseModel):
 class ChapterInfo(BaseModel):
     id: str
     title: str
+    content: str = ""  # 完整内容
     content_preview: str
     order: int
 

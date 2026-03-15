@@ -403,30 +403,9 @@ class SessionService:
             
             print(f"[DEBUG] Total messages to process: {len(messages)}")
             
-            # Zep 返回的消息默认是倒序的（最新在前），需要反转
-            # 尝试按 created_at 排序，如果没有则反转
-            try:
-                # 尝试获取 created_at 并排序
-                def get_created_at(msg):
-                    # 尝试多种方式获取创建时间
-                    if hasattr(msg, 'created_at'):
-                        return msg.created_at or ""
-                    if hasattr(msg, 'metadata') and msg.metadata:
-                        return msg.metadata.get('created_at', "")
-                    return ""
-                
-                # 检查是否有 created_at 属性
-                has_created_at = any(get_created_at(m) for m in messages)
-                if has_created_at:
-                    messages = sorted(messages, key=lambda m: get_created_at(m) or "")
-                    print(f"[DEBUG] Sorted messages by created_at")
-                else:
-                    # 没有 created_at，直接反转
-                    messages = list(reversed(messages))
-                    print(f"[DEBUG] Reversed messages order")
-            except Exception as sort_err:
-                print(f"[WARNING] Failed to sort messages: {sort_err}, reversing instead")
-                messages = list(reversed(messages))
+            # PostgreSQL 查询已经是 ASC 顺序，不需要反转
+            # 同一时间的消息顺序不确定，需要智能合并
+            print(f"[DEBUG] Total messages to process: {len(messages)}")
             
             chapters = []
             # Regex for Chinese chapter titles: 第[一二三四五六七八九十百千0-9]+[章节回堂回讲课]...
@@ -438,6 +417,79 @@ class SessionService:
                 r"^(#\s+.*)$",                                   # Markdown # Title
                 re.IGNORECASE
             )
+            
+            # 预处理：合并相邻的标题消息和内容消息
+            # 由于同一 created_at 的消息顺序不确定，需要双向查找
+            def is_title_message(content: str) -> bool:
+                """判断是否是标题消息：短消息且匹配章节标题模式"""
+                return len(content) < 50 and bool(chapter_pattern.match(content))
+            
+            # 使用标记数组跟踪已合并的消息
+            merged = [False] * len(messages)
+            merged_messages = []
+            
+            for i, msg in enumerate(messages):
+                if merged[i]:
+                    continue
+                    
+                content = msg.content.strip()
+                if not content:
+                    continue
+                
+                msg_uuid = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                
+                # 检测是否是标题消息
+                if is_title_message(content):
+                    # 向后查找内容消息
+                    for j in range(i + 1, min(i + 3, len(messages))):  # 查找后3条
+                        if merged[j]:
+                            continue
+                        next_content = messages[j].content.strip()
+                        if not is_title_message(next_content) and len(next_content) > 100:
+                            # 找到内容消息，合并
+                            merged_content = f"{content}\n\n{next_content}"
+                            merged_messages.append(type("Msg", (), {
+                                "uuid": msg_uuid,
+                                "content": merged_content
+                            })())
+                            merged[i] = True
+                            merged[j] = True
+                            print(f"[DEBUG] Merged title '{content[:30]}...' with content ({len(next_content)} chars)")
+                            break
+                    else:
+                        # 没找到内容消息，单独保留标题
+                        merged_messages.append(msg)
+                        merged[i] = True
+                else:
+                    # 当前是内容消息，向前查找标题
+                    found_title = None
+                    for j in range(i - 1, max(i - 3, -1), -1):  # 查找前3条
+                        if merged[j]:
+                            continue
+                        prev_content = messages[j].content.strip()
+                        if is_title_message(prev_content):
+                            found_title = (j, prev_content)
+                            break
+                    
+                    if found_title:
+                        # 找到标题，合并（标题在前）
+                        j, title = found_title
+                        title_uuid = getattr(messages[j], 'uuid_', None) or getattr(messages[j], 'uuid', None) or f"msg-{j}"
+                        merged_content = f"{title}\n\n{content}"
+                        merged_messages.append(type("Msg", (), {
+                            "uuid": title_uuid,
+                            "content": merged_content
+                        })())
+                        merged[i] = True
+                        merged[j] = True
+                        print(f"[DEBUG] Merged title '{title[:30]}...' with content ({len(content)} chars)")
+                    else:
+                        # 没找到标题，单独保留内容
+                        merged_messages.append(msg)
+                        merged[i] = True
+            
+            messages = merged_messages
+            print(f"[DEBUG] After merging: {len(messages)} messages")
             
             for i, msg in enumerate(messages):
                 content = msg.content.strip()
@@ -458,7 +510,7 @@ class SessionService:
                 
                 # If found chapters in this message, extract them
                 if chapter_positions:
-                    print(f"[DEBUG] Found {len(chapter_positions)} chapters in message {i}")
+                    print(f"[DEBUG] Found {len(chapter_positions)} chapters in message {i}, content len={len(content)}")
                     for idx, (start_line, title) in enumerate(chapter_positions):
                         # Determine end line (next chapter start or end of content)
                         if idx + 1 < len(chapter_positions):
@@ -469,6 +521,7 @@ class SessionService:
                         # Extract chapter content
                         chapter_lines = lines[start_line:end_line]
                         chapter_content = '\n'.join(chapter_lines).strip()
+                        print(f"[DEBUG] Chapter '{title[:20]}': lines {start_line}-{end_line}, content_len={len(chapter_content)}")
                         
                         preview = chapter_content[:200] + "..." if len(chapter_content) > 200 else chapter_content
                         chapters.append({
