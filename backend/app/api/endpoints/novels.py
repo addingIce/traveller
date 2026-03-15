@@ -425,25 +425,28 @@ async def delete_novel(collection_name: str, request: Request):
                     """
                     await driver_session.run(session_query, collection_name=collection_name)
 
+                    group_ids = session_ids if session_ids else [collection_name]
                     # 第一步：删除所有 Entity 节点的关系（包括 outgoing 和 incoming）
-                    # 使用 DETACH DELETE 删除关系但不删除目标节点
                     edge_query = """
-                    MATCH (n:Entity {group_id: $group_id})-[r]-(m)
+                    MATCH (n:Entity)
+                    WHERE n.group_id IN $group_ids
+                    MATCH (n)-[r]-(m)
                     DELETE r
                     RETURN count(r) as deleted
                     """
-                    edge_result = await driver_session.run(edge_query, group_id=collection_name)
+                    edge_result = await driver_session.run(edge_query, group_ids=group_ids)
                     edge_record = await edge_result.single()
                     if edge_record:
                         deleted_relationships = edge_record["deleted"]
                     
                     # 第二步：删除所有 Entity 节点
                     node_query = """
-                    MATCH (n:Entity {group_id: $group_id})
+                    MATCH (n:Entity)
+                    WHERE n.group_id IN $group_ids
                     DELETE n
                     RETURN count(n) as deleted
                     """
-                    node_result = await driver_session.run(node_query, group_id=collection_name)
+                    node_result = await driver_session.run(node_query, group_ids=group_ids)
                     node_record = await node_result.single()
                     if node_record:
                         deleted_entities = node_record["deleted"]
