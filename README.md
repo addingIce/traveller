@@ -6,49 +6,49 @@
 
 打破传统小说"作者写、读者看"的单向传递模式，将读者转化为"亲历者"或"变量"，允许用户以第一视角（角色扮演）或上帝视角（大纲改写）介入剧情。
 
+## 当前进度
+
+| 里程碑 | 状态 | 说明 |
+|--------|------|------|
+| M1: 数据基建与知识萃取 | ✅ 已完成 | 小说解析、知识图谱可视化 |
+| M2: 创作推演引擎 | 🔄 大部分完成 | Director AI、平行宇宙、节奏控制 |
+| M3: 互动游玩端 | ⏳ 待开发 | 创角流程、沉浸式UI |
+| M4: DM后台与闭环 | ⏳ 待开发 | 动态图谱覆写、上帝视角 |
+
 ## 核心功能
 
-### 1. 小说智能解析与知识图谱可视化
-- 支持长篇小说文本（百万字级别）的切片、向量化存储
-- 自动提取人物、地点、派系、核心道具及其关系
-- 美观的知识图谱展示人物关系网
-- 支持动态查询角色背景故事和近期经历
+### 已实现
 
-### 2. 动态图谱生成与状态监控
-- 实时实体提取监控，自动检测提取完成状态
-- 智能状态恢复机制，后端重启后自动恢复小说状态
-- 支持手动强制刷新图谱数据
+- **小说智能解析与知识图谱可视化**
+  - 支持长篇小说文本（百万字级别）的智能切块、向量化存储
+  - 自动提取人物、地点、派系、核心道具及其关系
+  - 知识图谱展示人物关系网
+  - 支持动态查询角色背景故事和近期经历
 
-### 3. 角色扮演与实时对话演进
-- 自定义人设构建（扮演原著角色或创建原创角色）
-- 行动/对话/心理活动三合一输入系统
-- AI 导演调度，智能抛出事件和线索
+- **动态会话管理**
+  - 每个玩家独立 Zep Session，记忆隔离
+  - 剧情书签机制，随时记录关键节点
+  - 平行宇宙分支，从任意节点开启新时间线
 
-### 4. 多分支剧情管理
-- 时光回溯功能，支持返回任意剧情节点
-- 平行宇宙分支，不同选择导向不同结局
-- 大纲导向续写，AI 自动补全剧情
+- **Director AI 双轨模式**
+  - 沙盒模式：高自由度，根据世界法则自由推演
+  - 收束模式：剧情路标引导，平滑回归主线
+  - 结构化输出：剧情文本 + 意图解析 + 世界影响 + UI提示
 
-## 技术栈
+- **叙事节奏控制器**
+  - 自动检测剧情停滞（连续闲聊无进展）
+  - 动态危机注入，推动剧情发展
 
-### 后端
-- **FastAPI**: Python Web 框架
-- **Zep**: 长期记忆与上下文管理
-- **Neo4j**: 图数据库，存储实体与关系
-- **Graphiti**: 智能实体与关系提取
-- **Docker**: 容器化部署
+- **原始剧情时间线**
+  - 章节结构自动识别与展示
+  - 支持从任意章节开启平行宇宙
 
-### 前端
-- **React**: 用户界面框架
-- **TypeScript**: 类型安全
-- **TailwindCSS**: 样式框架
-- **Vite**: 构建工具
+### 规划中
 
-### 核心依赖
-- Zep Client (端口 8000)
-- Neo4j (端口 7687)
-- Graphiti (端口 8003)
-- PostgreSQL (端口 5432)
+- **角色创建器**：扮演原著角色或创建原创角色
+- **沉浸式互动UI**：跑团风格叙事界面
+- **剧情改写面板**：大纲导向的章节生成
+- **动态图谱覆写**：玩家行为实时影响世界观
 
 ## 快速开始
 
@@ -77,12 +77,12 @@ cd backend
 python -m venv venv
 source venv/bin/activate  # Windows 使用 venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env  # 配置环境变量
+cp app/config.yaml.example app/config.yaml  # 配置参数
 ```
 
 4. **启动后端**
 ```bash
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8088 --reload
 ```
 
 5. **配置前端**
@@ -114,12 +114,6 @@ bash scripts/manage.sh stop
 
 # 重启所有服务
 bash scripts/manage.sh restart
-
-# 查看后端日志
-bash scripts/manage.sh logs backend
-
-# 健康检查
-bash scripts/manage.sh health
 ```
 
 ## 项目结构
@@ -128,86 +122,66 @@ bash scripts/manage.sh health
 novel/
 ├── backend/           # 后端服务
 │   ├── app/          # FastAPI 应用
+│   │   ├── api/      # API 端点
+│   │   ├── services/ # 业务逻辑
+│   │   └── models/   # 数据模型
 │   ├── scripts/      # 辅助脚本
-│   └── docker-compose.yml  # Docker 服务配置
+│   └── docker-compose.yml
 ├── frontend/         # 前端应用
-│   ├── src/
-│   │   ├── api/      # API 客户端
-│   │   ├── components/  # React 组件
-│   │   └── styles/   # 样式文件
-│   └── package.json
-├── data/            # 数据目录
-│   └── novels/      # 小说文本文件
-├── docs/            # 项目文档
-└── scripts/         # 管理脚本
+│   └── src/
+│       ├── api/      # API 客户端
+│       └── App.tsx   # 主应用
+├── data/             # 数据目录
+│   └── novels/       # 小说文本文件
+└── docs/             # 项目文档
 ```
-
-## 功能演示
-
-### 上传小说
-1. 点击"上传小说"按钮
-2. 输入小说标题
-3. 选择或粘贴小说文本
-4. 系统自动处理并提取实体
-
-### 查看知识图谱
-1. 在作品档案库中选择小说
-2. 切换到"知识图谱"标签
-3. 浏览实体关系网络
-4. 点击节点查看详细信息
-
-### 剧情推演
-1. 切换到"剧情时间线推演"标签
-2. 输入行动或对话
-3. AI 生成剧情推进
-4. 查看分支剧情
 
 ## 配置说明
 
-### 环境变量 (.env)
-```bash
+### 后端配置 (app/config.yaml)
+```yaml
+# 大模型配置
+llm:
+  model_director: "gpt-4o"
+  model_parser: "gpt-4o-mini"
+  api_base: "https://api.openai.com/v1"
+
 # Zep 配置
-ZEP_API_URL=http://localhost:8000
-ZEP_API_KEY=your_api_key
+zep:
+  api_url: "http://localhost:8000"
 
 # Neo4j 配置
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=your_password
-
-# OpenAI 兼容接口
-OPENAI_API_KEY=your_openai_key
-OPENAI_BASE_URL=https://api.openai.com/v1
-
-# 模型配置
-MODEL_DIRECTOR=gpt-4o
-MODEL_PARSER=gpt-4o-mini
+neo4j:
+  uri: "bolt://localhost:7687"
+  user: "neo4j"
+  password: "your_password"
 ```
 
-### 前端配置
-在配置页面可以调整：
-- 模型选择
-- 实体提取参数
-- 图谱显示设置
-- 剧情推演参数
+## 开发路线图
 
-## 开发指南
+### M1: 数据基建与知识萃取 ✅
+- 文本清洗与向量化管道
+- 知识图谱自动提取
+- 前端档案库展示
 
-### 添加新功能
-1. 后端: 在 `backend/app/api/endpoints/` 添加新的 API 端点
-2. 前端: 在 `frontend/src/components/` 添加新的组件
-3. 样式: 使用 TailwindCSS 类名
+### M2: 创作推演引擎 🔄
+- [x] Zep 动态 Session 管理
+- [x] 剧情书签与平行宇宙分支
+- [x] Director AI 双轨模式
+- [x] 叙事节奏控制器
+- [x] 原始剧情时间线交互
+- [ ] 指令注入防御层
+- [ ] 图谱变更自动触发器
 
-### 运行测试
-```bash
-# 后端测试
-cd backend
-python -m pytest
+### M3: 互动游玩端 ⏳
+- 创角流程开发
+- 沉浸式 UI 设计
+- 快捷输入系统
 
-# 前端测试
-cd frontend
-npm test
-```
+### M4: DM后台与产品闭环 ⏳
+- 动态图谱覆写机制
+- 上帝视角查阅台
+- 安全防护与压力测试
 
 ## 常见问题
 
@@ -217,8 +191,8 @@ A: 检查 Docker 服务是否正常运行，特别是 Zep 和 Graphiti 服务。
 ### Q: 知识图谱显示为空？
 A: 可能是实体提取还在进行中，等待几分钟后再试。可以点击"强制刷新"按钮。
 
-### Q: 如何重启服务？
-A: 使用 `bash scripts/manage.sh restart` 命令。
+### Q: Zep 无法通过浏览器访问？
+A: Zep CE 是纯 API 服务，没有 Web UI 界面，这是正常的。通过本项目的前端界面操作即可。
 
 ## 贡献指南
 
