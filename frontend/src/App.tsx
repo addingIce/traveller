@@ -2047,19 +2047,17 @@ const scrollToSection = (sectionId: string) => {
                         >
                             {/* Original Storyline Timeline */}
                             <div className="border-b border-white/5 bg-slate-800/20 px-4 py-3">
-                                <div className="flex items-center justify-between">
-                                    <div className="flex items-center gap-3">
-                                        <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
-                                            <History className="w-3 h-3" /> 原始剧情时间线
-                                        </h3>
-                                        <span className="text-[10px] text-slate-600">{chapters.length} 个章节已载入</span>
-                                    </div>
+                                <div className="flex items-center gap-3">
+                                    <h3 className="text-xs font-bold uppercase tracking-widest text-slate-500 flex items-center gap-2">
+                                        <History className="w-3 h-3" /> 原始剧情时间线
+                                    </h3>
                                     <button
                                         onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
-                                        className="text-[10px] uppercase tracking-widest text-slate-400 hover:text-slate-200 transition"
+                                        className="px-2 py-0.5 text-[10px] font-medium border border-sky-500/40 text-sky-400 hover:bg-sky-500/20 hover:border-sky-500/60 rounded transition-all"
                                     >
                                         {isTimelineExpanded ? '收起' : '展开'}
                                     </button>
+                                    <span className="text-[10px] text-slate-600">{chapters.length} 个章节已载入</span>
                                 </div>
                                 {isTimelineExpanded && (
                                     <div className="mt-3 max-h-60 overflow-y-auto overflow-x-hidden custom-scrollbar">
