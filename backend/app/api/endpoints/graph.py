@@ -60,12 +60,21 @@ def _normalize_entity_name(name: str) -> str:
     return normalized.strip().lower()
 
 
+def _coerce_priority(node: Dict[str, Any]) -> int:
+    try:
+        return int(node.get("priority", 0))
+    except Exception:
+        return 0
+
+
 def _is_better_graph_node(candidate: Dict[str, Any], current: Dict[str, Any]) -> bool:
     candidate_score = (
+        _coerce_priority(candidate),
         int(candidate.get("rel_count", 0)),
         len((candidate.get("summary") or "").strip()),
     )
     current_score = (
+        _coerce_priority(current),
         int(current.get("rel_count", 0)),
         len((current.get("summary") or "").strip()),
     )
@@ -105,7 +114,7 @@ def _dedupe_graph_payload(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any
         [{"id": node["id"], "label": node["label"], "type": node["type"]} for node in passthrough_nodes]
     )
     deduped_edges: List[Dict[str, Any]] = []
-    edge_seen: set[tuple[str, str, str]] = set()
+    edge_winners: Dict[tuple[str, str, str], Dict[str, Any]] = {}
     for edge in edges:
         source = uuid_alias.get(edge["source"], edge["source"])
         target = uuid_alias.get(edge["target"], edge["target"])
@@ -113,15 +122,21 @@ def _dedupe_graph_payload(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any
             continue
         label = edge.get("label") or "related"
         edge_key = (source, target, label)
-        if edge_key in edge_seen:
+        current = edge_winners.get(edge_key)
+        if current is None:
+            edge_winners[edge_key] = edge
             continue
-        edge_seen.add(edge_key)
+        # Prefer higher priority edge
+        if _coerce_priority(edge) > _coerce_priority(current):
+            edge_winners[edge_key] = edge
+
+    for edge in edge_winners.values():
         deduped_edges.append(
             {
                 "id": edge["id"],
-                "source": source,
-                "target": target,
-                "label": label,
+                "source": uuid_alias.get(edge["source"], edge["source"]),
+                "target": uuid_alias.get(edge["target"], edge["target"]),
+                "label": edge.get("label") or "related",
             }
         )
 
@@ -283,7 +298,9 @@ async def get_knowledge_graph(
                     n.summary as summary,
                     labels(n) as labels,
                     count(r) as rel_count,
-                    n.group_id as group_id
+                    n.group_id as group_id,
+                    n.source as source,
+                    n.priority as priority
                 """
                 node_result = await session.run(node_query, group_ids=group_ids)
                 nodes = []
@@ -295,13 +312,15 @@ async def get_knowledge_graph(
                         "summary": record["summary"] or "",
                         "rel_count": int(record["rel_count"] or 0),
                         "group_id": record["group_id"],
+                        "source": record["source"] or "auto",
+                        "priority": int(record["priority"] or 0),
                     })
                 
                 # 获取关系边（支持多个 group_id）
                 edge_query = """
                 MATCH (n:Entity)-[r:RELATES_TO]->(m:Entity)
                 WHERE n.group_id IN $group_ids AND m.group_id IN $group_ids
-                RETURN r.uuid as uuid, n.uuid as source, m.uuid as target, r.fact as fact, r.name as name
+                RETURN r.uuid as uuid, n.uuid as source, m.uuid as target, r.fact as fact, r.name as name, r.source as source_flag, r.priority as priority
                 """
                 edge_result = await session.run(edge_query, group_ids=group_ids)
                 edges = []
@@ -310,7 +329,9 @@ async def get_knowledge_graph(
                         "id": record["uuid"],
                         "source": record["source"],
                         "target": record["target"],
-                        "label": record["name"] or record["fact"] or "related"
+                        "label": record["name"] or record["fact"] or "related",
+                        "source_flag": record["source_flag"] or "auto",
+                        "priority": int(record["priority"] or 0),
                     })
                 
                 if nodes:
