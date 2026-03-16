@@ -1923,25 +1923,40 @@ const scrollToSection = (sectionId: string) => {
                         <div className="relative bg-black/20 flex-1 overflow-hidden" style={{ display: activeTab === 'graph' ? 'block' : 'none' }}>
                             <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm text-[10px] uppercase tracking-widest text-slate-300">
                                 {[
+                                    { key: 'all', label: '全部' },
                                     { key: 'person', label: '人物' },
                                     { key: 'place', label: '地点' },
                                     { key: 'org', label: '组织' },
                                     { key: 'item', label: '物品' },
                                     { key: 'concept', label: '概念' },
                                 ].map((t) => {
-                                    const active = graphTypeFilters.has(t.key);
+                                    const allTypes = ['person', 'place', 'org', 'item', 'concept'];
+                                    const isAll = t.key === 'all';
+                                    const active = isAll
+                                        ? allTypes.every(type => graphTypeFilters.has(type))
+                                        : graphTypeFilters.has(t.key);
                                     return (
                                         <button
                                             key={t.key}
                                             onClick={() => {
                                                 setGraphTypeFilters(prev => {
-                                                    const next = new Set(prev);
-                                                    if (next.has(t.key)) {
-                                                        next.delete(t.key);
+                                                    if (isAll) {
+                                                        // 点击"全部"：切换选中/取消所有
+                                                        if (allTypes.every(type => prev.has(type))) {
+                                                            return new Set(); // 取消所有
+                                                        } else {
+                                                            return new Set(allTypes); // 选中所有
+                                                        }
                                                     } else {
-                                                        next.add(t.key);
+                                                        // 其他按钮：toggle 逻辑
+                                                        const next = new Set(prev);
+                                                        if (next.has(t.key)) {
+                                                            next.delete(t.key);
+                                                        } else {
+                                                            next.add(t.key);
+                                                        }
+                                                        return next;
                                                     }
-                                                    return next;
                                                 });
                                             }}
                                             className={`px-2 py-1 rounded-lg border transition-all ${
