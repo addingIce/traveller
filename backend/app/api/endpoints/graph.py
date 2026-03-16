@@ -121,6 +121,23 @@ def _is_better_graph_node(candidate: Dict[str, Any], current: Dict[str, Any]) ->
 
 
 def _dedupe_graph_payload(nodes: List[Dict[str, Any]], edges: List[Dict[str, Any]]) -> Dict[str, Any]:
+    # 排除的实体名称列表（这些是 API 消息角色，不是故事角色）
+    EXCLUDED_ENTITY_LABELS = {"user", "讲述者", "narrator", "speaker"}
+    
+    # 先过滤掉排除列表中的实体，收集其 ID
+    excluded_ids: set = set()
+    filtered_nodes: List[Dict[str, Any]] = []
+    for node in nodes:
+        label = _normalize_entity_name(node.get("label", ""))
+        if label in EXCLUDED_ENTITY_LABELS:
+            excluded_ids.add(node["id"])
+        else:
+            filtered_nodes.append(node)
+    nodes = filtered_nodes
+    
+    # 过滤掉与排除实体相关的边
+    edges = [e for e in edges if e.get("source") not in excluded_ids and e.get("target") not in excluded_ids]
+    
     winners_by_name: Dict[str, Dict[str, Any]] = {}
     uuid_alias: Dict[str, str] = {}
     passthrough_nodes: List[Dict[str, Any]] = []

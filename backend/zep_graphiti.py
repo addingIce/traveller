@@ -356,8 +356,8 @@ class ResilientOpenAIClient(OpenAIClient):
                             )
                             # duplicate_fact_idx 规则：修复 TypeError
                             duplicate_rule = "\n\nIMPORTANT FIELD RULE: The 'duplicate_fact_idx' field must ALWAYS be an integer (-1 if no duplicate). Never return a list for this field. Similarly, 'contradicted_facts' should be a list of integers, not nested lists."
-                            # 排除规则：不提取通用角色名
-                            exclusion_rule = "\n\nEXCLUSION RULE: Do NOT extract 'user', '讲述者', 'narrator', 'speaker' as entities. These are generic roles, not actual characters in the story."
+                            # 排除规则：不提取通用角色名（注意：消息中的 role:user 是 API 格式，不是故事角色）
+                            exclusion_rule = "\n\nCRITICAL EXCLUSION RULE: Do NOT extract 'user', '讲述者', 'narrator', 'speaker', 'assistant' as entities. These are API message roles (like role:user), NOT characters in the story. Ignore them completely."
                             
                             combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule
                             
