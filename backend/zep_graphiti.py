@@ -684,8 +684,28 @@ class ResilientOpenAIClient(OpenAIClient):
         return json.loads(self.clean_json_text(content))
 
 class SerialOpenAIEmbedder(OpenAIEmbedder):
-    """使用真实 OpenAI Embedding API 的 Embedder"""
-    pass
+    """使用真实 OpenAI Embedding API 的 Embedder，支持阿里云批量限制"""
+    
+    # 阿里云 DashScope 限制每批最多 10 个文本
+    MAX_BATCH_SIZE = 10
+    
+    async def create_batch(self, texts: list[str]) -> list[list[float]]:
+        """
+        分批处理 embedding 请求，每批最多 MAX_BATCH_SIZE 个文本
+        解决阿里云 DashScope API 批量限制问题
+        """
+        if len(texts) <= self.MAX_BATCH_SIZE:
+            return await super().create_batch(texts)
+        
+        # 分批处理
+        all_embeddings = []
+        for i in range(0, len(texts), self.MAX_BATCH_SIZE):
+            batch = texts[i:i + self.MAX_BATCH_SIZE]
+            batch_embeddings = await super().create_batch(batch)
+            all_embeddings.extend(batch_embeddings)
+            logger.info(f"Embedding batch {i // self.MAX_BATCH_SIZE + 1}: {len(batch)} texts")
+        
+        return all_embeddings
 
 async def get_graphiti(settings: ZepEnvDep):
     # LLM 配置
