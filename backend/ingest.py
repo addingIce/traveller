@@ -141,11 +141,13 @@ async def add_messages(
                     return
 
                 print(f"Adding episode to graphiti: {m.uuid}")
+                # 格式化 episode_body：role 为空时只显示 role_type，避免空括号
+                episode_body = f'{m.role}({m.role_type}): {m.content}' if m.role else f'({m.role_type}): {m.content}'
                 await graphiti.add_episode(
                     uuid=m.uuid,
                     group_id=group_id,
                     name=m.name or f"Message {m.uuid[:8]}",
-                    episode_body=f'{m.role or ""}({m.role_type}): {m.content}',
+                    episode_body=episode_body,
                     reference_time=m.timestamp or utc_now(),
                     source=EpisodeType.message,
                     source_description=m.source_description or "Zep Ingest",

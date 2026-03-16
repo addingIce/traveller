@@ -46,7 +46,7 @@ async def ingest_novel(file_path: str, session_id: str):
         messages = [
             Message(
                 role_type="user",
-                role="讲述者",
+                role="",  # 空角色，避免 LLM 将"讲述者"识别为实体
                 content=chunk,
             )
             for chunk in batch
