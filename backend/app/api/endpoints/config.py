@@ -153,6 +153,9 @@ def update_env_file(config: SystemConfig):
             "NEO4J_TIMEOUT": str(config.business.neo4j_timeout),
         }
         
+        # 需要占位值的 API Key 环境变量（自建服务可能不需要 Key）
+        placeholder_keys = {"OPENAI_API_KEY", "EMBEDDING_OPENAI_API_KEY", "ZEP_NLP_OPENAI_API_KEY"}
+        
         # 更新或添加环境变量
         updated_lines = []
         updated_keys = set()
@@ -163,16 +166,23 @@ def update_env_file(config: SystemConfig):
                 key = line.split('=')[0].strip()
                 if key in env_vars:
                     value = env_vars[key]
-                    if value:  # 只保存非空的值
+                    if value:
                         updated_lines.append(f"{key}={value}\n")
+                    elif key in placeholder_keys:
+                        # API Key 为空时写入占位值
+                        updated_lines.append(f"{key}=not-needed\n")
                     updated_keys.add(key)
                     continue
             updated_lines.append(line + '\n')
         
         # 添加缺失的环境变量
         for key, value in env_vars.items():
-            if key not in updated_keys and value:
-                updated_lines.append(f"{key}={value}\n")
+            if key not in updated_keys:
+                if value:
+                    updated_lines.append(f"{key}={value}\n")
+                elif key in placeholder_keys:
+                    # API Key 为空时写入占位值
+                    updated_lines.append(f"{key}=not-needed\n")
         
         # 写回文件
         with open(ENV_FILE, 'w', encoding='utf-8') as f:
