@@ -59,6 +59,21 @@ def _normalize_entity_name(name: str) -> str:
     normalized = unicodedata.normalize("NFKC", name or "")
     return normalized.strip().lower()
 
+def _normalize_type_from_labels(labels: list) -> str:
+    """从 Neo4j 标签中提取实体类型（Graphiti 使用中文标签存储类型）"""
+    label_mapping = {
+        "人物": "person",
+        "地点": "place",
+        "组织": "org",
+        "物品": "item",
+        "概念": "concept",
+    }
+    if labels:
+        for label in labels:
+            if label in label_mapping:
+                return label_mapping[label]
+    return "concept"
+
 def _normalize_type_from_id(entity_type_id: Any) -> str:
     try:
         type_id = int(entity_type_id)
@@ -72,6 +87,16 @@ def _normalize_type_from_id(entity_type_id: Any) -> str:
         5: "concept",
     }
     return mapping.get(type_id, "concept")
+
+def _get_entity_type(labels: list = None, entity_type_id: Any = None) -> str:
+    """获取实体类型：优先从 labels 读取，再 fallback 到 entity_type_id"""
+    # 优先从 labels 获取（Graphiti 存储方式）
+    if labels:
+        type_from_labels = _normalize_type_from_labels(labels)
+        if type_from_labels != "concept":
+            return type_from_labels
+    # fallback 到 entity_type_id
+    return _normalize_type_from_id(entity_type_id)
 
 
 def _coerce_priority(node: Dict[str, Any]) -> int:
@@ -320,7 +345,7 @@ async def get_knowledge_graph(
                 node_result = await session.run(node_query, group_ids=group_ids)
                 nodes = []
                 async for record in node_result:
-                    normalized_type = _normalize_type_from_id(record["entity_type_id"])
+                    normalized_type = _get_entity_type(record.get("labels"), record.get("entity_type_id"))
                     nodes.append({
                         "id": record["uuid"],
                         "label": record["name"],
@@ -406,7 +431,7 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
             cypher = """
             MATCH (n:Entity {group_id: $group_id})
             WHERE n.name CONTAINS $search_query OR n.summary CONTAINS $search_query
-            RETURN n.uuid as uuid, n.name as name, n.entity_type_id as entity_type_id
+            RETURN n.uuid as uuid, n.name as name, labels(n) as labels, n.entity_type_id as entity_type_id
             LIMIT 10
             """
             result = await session.run(cypher, group_id=session_id, search_query=query or "")
@@ -414,7 +439,7 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                 results["nodes"].append({
                     "id": record["uuid"],
                     "label": record["name"],
-                    "type": _normalize_type_from_id(record.get("entity_type_id"))
+                    "type": _get_entity_type(record.get("labels"), record.get("entity_type_id"))
                 })
             deduped_nodes = _dedupe_search_nodes(results["nodes"])
             if len(deduped_nodes) != len(results["nodes"]):
@@ -475,7 +500,7 @@ async def get_node_detail(uuid: str, request: Request):
         raise HTTPException(status_code=503, detail="Database not ready")
 
     async with driver.session() as session:
-        query = "MATCH (n:Entity {uuid: $uuid}) RETURN n.uuid as id, n.name as label, n.summary as summary, n.entity_type_id as entity_type_id"
+        query = "MATCH (n:Entity {uuid: $uuid}) RETURN n.uuid as id, n.name as label, n.summary as summary, labels(n) as labels, n.entity_type_id as entity_type_id"
         result = await session.run(query, uuid=uuid)
         record = await result.single()
         if not record:
@@ -483,6 +508,6 @@ async def get_node_detail(uuid: str, request: Request):
         return NodeDetail(
             id=record["id"],
             label=record["label"],
-            type=_normalize_type_from_id(record.get("entity_type_id")),
+            type=_get_entity_type(record.get("labels"), record.get("entity_type_id")),
             summary=record["summary"]
         )
