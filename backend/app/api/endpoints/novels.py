@@ -225,14 +225,14 @@ async def get_novels_list(request: Request):
     if driver:
         try:
             async with driver.session() as session:
-                # 获取所有 Novel 节点，以及每个小说的实体数量
+                # 获取所有 Novel 节点，以及每个小说的实体数量（按名称去重，与图谱一致）
                 novel_query = """
                 MATCH (novel:Novel)
                 OPTIONAL MATCH (entity:Entity {group_id: novel.collection_name})
-                WITH novel, COUNT(DISTINCT entity) as entity_count
+                WITH novel, COUNT(DISTINCT entity.name) as entity_count
                 ORDER BY novel.created_at DESC
-                RETURN novel.collection_name as collection_name, 
-                       novel.title as title, 
+                RETURN novel.collection_name as collection_name,
+                       novel.title as title,
                        novel.created_at as created_at,
                        novel.status as novel_status,
                        entity_count
@@ -268,7 +268,7 @@ async def get_novels_list(request: Request):
                 old_novels_query = """
                 MATCH (e:Entity)
                 WHERE e.group_id STARTS WITH 'novel_'
-                WITH e.group_id as group_id, COUNT(e) as entity_count
+                WITH e.group_id as group_id, COUNT(DISTINCT e.name) as entity_count
                 OPTIONAL MATCH (n:Novel {collection_name: group_id})
                 WITH group_id, entity_count, n
                 WHERE n IS NULL
