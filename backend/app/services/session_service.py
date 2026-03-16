@@ -322,43 +322,16 @@ class SessionService:
             session_id = novel_id if novel_id.startswith("novel_") else f"novel_{novel_id}"
             print(f"[DEBUG] extract_chapters: novel_id={novel_id}, session_id={session_id}")
             messages = []
-            # 1) Prefer Zep HTTP API (more stable)
-            try:
-                zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
-                zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
-                print(f"[DEBUG] Calling Zep HTTP API: {zep_api_url}/api/v1/session/{session_id}/messages")
-                async with httpx.AsyncClient(timeout=30.0) as http_client:
-                    resp = await http_client.get(
-                        f"{zep_api_url}/api/v1/session/{session_id}/messages",
-                        params={"limit": 1000},  # 增大限制以支持长篇小说
-                        headers={"Authorization": f"Bearer {zep_api_key}"}
-                    )
-                    print(f"[DEBUG] Zep HTTP response status: {resp.status_code}")
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        raw_messages = data.get("messages") or []
-                        print(f"[DEBUG] Zep HTTP returned {len(raw_messages)} raw messages")
-                        for msg in raw_messages:
-                            content = (msg.get("content") or "").strip()
-                            if not content:
-                                continue
-                            messages.append(type("Msg", (), {"uuid": msg.get("uuid"), "content": content})())
-                    else:
-                        print(f"[DEBUG] Zep HTTP error: {resp.text[:200]}")
-            except Exception as http_err:
-                print(f"[ERROR] extracting chapters from Zep HTTP: {http_err}")
-
-            # 2) Fallback to Zep SDK
-            if not messages:
-                print(f"[DEBUG] Falling back to Zep SDK...")
-                try:
-                    memory = await self.zep.memory.get(session_id)
-                    messages = memory.messages or []
-                    print(f"[DEBUG] Zep SDK returned {len(messages)} messages")
-                except Exception as sdk_err:
-                    print(f"[ERROR] extracting chapters from Zep SDK: {sdk_err}")
             
-            # 3) Direct PostgreSQL query fallback (bypasses Zep message_window limit)
+            # 1) Try Zep SDK first
+            try:
+                memory = await self.zep.memory.get(session_id)
+                messages = memory.messages or []
+                print(f"[DEBUG] Zep SDK returned {len(messages)} messages")
+            except Exception as sdk_err:
+                print(f"[ERROR] extracting chapters from Zep SDK: {sdk_err}")
+            
+            # 2) Direct PostgreSQL query fallback (bypasses Zep message_window limit)
             # Zep CE has a default message_window limit that restricts returned messages
             # This queries the database directly to get ALL messages
             if not messages or len(messages) < 20:
