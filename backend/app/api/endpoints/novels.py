@@ -511,7 +511,20 @@ async def delete_novel(collection_name: str, request: Request):
                 errors.append(error_msg)
                 print(f"[ERROR] {error_msg}")
         
-        # 4. 取消监控任务并从状态存储中移除
+        # 4. 通知 Graphiti 取消处理该小说的消息
+        try:
+            import httpx
+            graphiti_url = os.getenv("GRAPHITI_API_URL", "http://localhost:8003")
+            async with httpx.AsyncClient(timeout=5.0) as http_client:
+                resp = await http_client.post(f"{graphiti_url}/cancel/{collection_name}")
+                if resp.status_code == 200:
+                    print(f"[INFO] Notified Graphiti to cancel processing for {collection_name}")
+                else:
+                    print(f"[WARNING] Failed to notify Graphiti: {resp.status_code}")
+        except Exception as cancel_err:
+            print(f"[WARNING] Could not notify Graphiti to cancel: {cancel_err}")
+        
+        # 5. 取消监控任务并从状态存储中移除
         if collection_name in status_store:
             task_info = status_store[collection_name]
             # 取消正在运行的监控任务
@@ -520,7 +533,7 @@ async def delete_novel(collection_name: str, request: Request):
                 monitor_task.cancel()
                 print(f"[INFO] Cancelled monitoring task for {collection_name}")
             del status_store[collection_name]
-        # 5. 清理图谱缓存
+        # 6. 清理图谱缓存
         try:
             if graph_cache and isinstance(graph_cache, dict):
                 items = graph_cache.get("items", {})

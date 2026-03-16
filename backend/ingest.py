@@ -12,6 +12,10 @@ from pydantic import BaseModel
 from graph_service.zep_graphiti import ZepGraphitiDep
 
 
+# 存储已取消的 group_id（小说集合）
+cancelled_groups: set[str] = set()
+
+
 class AsyncWorker:
     def __init__(self):
         self.queue = asyncio.Queue()
@@ -86,11 +90,16 @@ async def add_messages(
     from graph_service.config import get_settings
     from graph_service.zep_graphiti import get_graphiti as get_graphiti_it
 
-    async def add_messages_task(m: Message):
+    async def add_messages_task(m: Message, group_id: str):
         from graphiti_core.nodes import EpisodicNode
         from graphiti_core.errors import NodeNotFoundError
         from graphiti_core.utils.datetime_utils import utc_now
         import time
+
+        # 检查是否已被取消
+        if group_id in cancelled_groups:
+            print(f"[SKIP] Group {group_id} has been cancelled, skipping message {m.uuid}")
+            return
 
         print(f"Task started for message: {m.uuid}")
         # 增加延时以缓解 Rate Limit（可配置）
@@ -102,6 +111,11 @@ async def add_messages(
         settings = get_settings()
         try:
             async for graphiti in get_graphiti_it(settings):
+                # 再次检查是否已被取消（可能在等待期间被取消）
+                if group_id in cancelled_groups:
+                    print(f"[SKIP] Group {group_id} was cancelled during processing, aborting message {m.uuid}")
+                    return
+
                 # 检查节点是否存在，不存在则创建
                 try:
                     await EpisodicNode.get_by_uuid(graphiti.driver, m.uuid)
@@ -111,7 +125,7 @@ async def add_messages(
                     new_ep = EpisodicNode(
                         uuid=m.uuid,
                         name=m.name or f"Message {m.uuid[:8]}",
-                        group_id=request.group_id,
+                        group_id=group_id,
                         content=f'{m.role or ""}({m.role_type}): {m.content}',
                         created_at=utc_now(),
                         valid_at=m.timestamp or utc_now(),
@@ -121,10 +135,15 @@ async def add_messages(
                     await new_ep.save(graphiti.driver)
                     print(f"Node {m.uuid} created and saved.")
 
+                # 最终检查是否已被取消
+                if group_id in cancelled_groups:
+                    print(f"[SKIP] Group {group_id} was cancelled, skipping episode {m.uuid}")
+                    return
+
                 print(f"Adding episode to graphiti: {m.uuid}")
                 await graphiti.add_episode(
                     uuid=m.uuid,
-                    group_id=request.group_id,
+                    group_id=group_id,
                     name=m.name or f"Message {m.uuid[:8]}",
                     episode_body=f'{m.role or ""}({m.role_type}): {m.content}',
                     reference_time=m.timestamp or utc_now(),
@@ -139,7 +158,7 @@ async def add_messages(
             traceback.print_exc()
 
     for m in request.messages:
-        await async_worker.queue.put(partial(add_messages_task, m))
+        await async_worker.queue.put(partial(add_messages_task, m, request.group_id))
 
     return Result(message='Messages added to processing queue', success=True)
 
@@ -183,3 +202,19 @@ async def clear(
     await clear_data(graphiti.driver)
     await graphiti.build_indices_and_constraints()
     return Result(message='Graph cleared', success=True)
+
+
+@router.post('/cancel/{group_id}', status_code=status.HTTP_200_OK)
+async def cancel_group(group_id: str):
+    """取消指定小说集合的所有待处理消息"""
+    cancelled_groups.add(group_id)
+    print(f"[CANCEL] Group {group_id} has been marked as cancelled")
+    return Result(message=f'Group {group_id} cancelled', success=True)
+
+
+@router.delete('/cancel/{group_id}', status_code=status.HTTP_200_OK)
+async def remove_cancel(group_id: str):
+    """移除取消标记（用于重新处理）"""
+    cancelled_groups.discard(group_id)
+    print(f"[UNCANCEL] Group {group_id} has been removed from cancelled list")
+    return Result(message=f'Group {group_id} uncancelled', success=True)
