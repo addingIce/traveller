@@ -24,63 +24,39 @@ os.environ["http_proxy"] = ""
 os.environ["https_proxy"] = ""
 
 def _ensure_vectors(query, params):
+    """确保必要的字段存在，不再注入 Mock 向量（使用真实 Embedding）"""
     if not isinstance(params, dict): return
-    fixed = False
     
     # Check for nodes list (bulk save)
     if 'nodes' in params and isinstance(params['nodes'], list):
         for node in params['nodes']:
-            if isinstance(node, dict) and node.get('name_embedding') is None:
-                node['name_embedding'] = [0.1] * 1536
-                fixed = True
             if isinstance(node, dict):
                 if node.get('source') is None:
                     node['source'] = 'auto'
-                    fixed = True
                 if node.get('priority') is None:
                     node['priority'] = 0
-                    fixed = True
     
     # Check for entity_data (single save)
     if 'entity_data' in params and isinstance(params['entity_data'], dict):
-        if params['entity_data'].get('name_embedding') is None:
-            params['entity_data']['name_embedding'] = [0.1] * 1536
-            fixed = True
         if params['entity_data'].get('source') is None:
             params['entity_data']['source'] = 'auto'
-            fixed = True
         if params['entity_data'].get('priority') is None:
             params['entity_data']['priority'] = 0
-            fixed = True
             
     # Check for edges list (bulk edges)
     if 'entity_edges' in params and isinstance(params['entity_edges'], list):
         for edge in params['entity_edges']:
-            if isinstance(edge, dict) and edge.get('fact_embedding') is None:
-                edge['fact_embedding'] = [0.1] * 1536
-                fixed = True
             if isinstance(edge, dict):
                 if edge.get('source') is None:
                     edge['source'] = 'auto'
-                    fixed = True
                 if edge.get('priority') is None:
                     edge['priority'] = 0
-                    fixed = True
 
-    # Direct check
-    for k in ['name_embedding', 'fact_embedding']:
-        if k in params and params[k] is None:
-            params[k] = [0.1] * 1536
-            fixed = True
+    # Direct check for source/priority
     if 'source' in params and params['source'] is None:
         params['source'] = 'auto'
-        fixed = True
     if 'priority' in params and params['priority'] is None:
         params['priority'] = 0
-        fixed = True
-    
-    if fixed:
-        print(f"!!! [PRINT] INJECTED VECTORS INTO QUERY: {query[:60]}...", flush=True)
 
 _original_run = neo4j.AsyncSession.run
 async def _hooked_run(self, *args, **kwargs):
@@ -115,10 +91,7 @@ _original_bulk = bulk_mod.add_nodes_and_edges_bulk
 async def _hooked_bulk(driver, episodic_nodes, episodic_edges, entity_nodes, entity_edges, embedder):
     msg = f"!!! [PRINT] BULK SAVE CALL !!! Entities: {len(entity_nodes)}, Edges: {len(entity_edges)}, Episodic: {len(episodic_nodes)}"
     print(msg, flush=True)
-    for i, node in enumerate(entity_nodes):
-        if not getattr(node, 'name_embedding', None):
-            node.name_embedding = [0.1] * 1536
-            print(f"!!! [PRINT] Attached mock vector to {node.name} in bulk_hook", flush=True)
+    # 不再注入 Mock 向量，使用真实 Embedding
     return await _original_bulk(driver, episodic_nodes, episodic_edges, entity_nodes, entity_edges, embedder)
 
 # Brute force patch
@@ -177,20 +150,6 @@ async def _hooked_resolve_edge(*args, **kwargs):
 edge_ops.resolve_extracted_edge = _hooked_resolve_edge
 if hasattr(g_core, 'resolve_extracted_edge'):
     g_core.resolve_extracted_edge = _hooked_resolve_edge
-
-_original_execute = neo4j.AsyncDriver.execute_query
-# GLOBAL MONKEY PATCH FOR EMBEDDER
-from graphiti_core.embedder.openai import OpenAIEmbedder
-async def _super_mock_create(self, *args, **kwargs):
-    # logger.error("EMBEDDER.create (Super Mock) called")
-    return [0.1] * 1536
-async def _super_mock_batch(self, *args, **kwargs):
-    input_data = args[0] if args else kwargs.get('input_data', [])
-    count = len(input_data) if isinstance(input_data, list) else 1
-    logger.error(f"EMBEDDER.create_batch (Super Mock) called for {count} items")
-    return [[0.1] * 1536 for _ in range(count)]
-OpenAIEmbedder.create = _super_mock_create
-OpenAIEmbedder.create_batch = _super_mock_batch
 
 _original_execute = neo4j.AsyncDriver.execute_query
 async def _hooked_execute(self, query_, *args, **kwargs):
@@ -725,25 +684,8 @@ class ResilientOpenAIClient(OpenAIClient):
         return json.loads(self.clean_json_text(content))
 
 class SerialOpenAIEmbedder(OpenAIEmbedder):
-    async def create(self, *args, **kwargs) -> list[float]:
-        return [0.1] * 1536
-            
-    async def create_batch(self, *args, **kwargs) -> list[list[float]]:
-        # 宽容处理输入，不管是 args 还是 kwargs
-        input_data = []
-        if args:
-            input_data = args[0]
-        elif 'input_data' in kwargs:
-            input_data = kwargs['input_data']
-        elif 'input_data_list' in kwargs:
-            input_data = kwargs['input_data_list']
-            
-        count = len(input_data) if isinstance(input_data, list) else 1
-        logger.error(f"MOCKING BATCH EMBEDDING for {count} items")
-        return [[0.1] * 1536 for _ in range(count)]
-
-    async def embed(self, *args, **kwargs):
-        return [0.1] * 1536
+    """使用真实 OpenAI Embedding API 的 Embedder"""
+    pass
 
 async def get_graphiti(settings: ZepEnvDep):
     # LLM 配置
