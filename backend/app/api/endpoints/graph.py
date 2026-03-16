@@ -406,7 +406,7 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
             cypher = """
             MATCH (n:Entity {group_id: $group_id})
             WHERE n.name CONTAINS $search_query OR n.summary CONTAINS $search_query
-            RETURN n.uuid as uuid, n.name as name, labels(n) as labels
+            RETURN n.uuid as uuid, n.name as name, n.entity_type_id as entity_type_id
             LIMIT 10
             """
             result = await session.run(cypher, group_id=session_id, search_query=query or "")
@@ -414,7 +414,7 @@ async def search_graph_api(collection_name: str, query: str, request: Request):
                 results["nodes"].append({
                     "id": record["uuid"],
                     "label": record["name"],
-                    "type": record["labels"][0] if record["labels"] else "concept"
+                    "type": _normalize_type_from_id(record.get("entity_type_id"))
                 })
             deduped_nodes = _dedupe_search_nodes(results["nodes"])
             if len(deduped_nodes) != len(results["nodes"]):
@@ -473,9 +473,9 @@ async def get_node_detail(uuid: str, request: Request):
     driver = getattr(request.app.state, "neo4j_driver", None)
     if not driver:
         raise HTTPException(status_code=503, detail="Database not ready")
-        
+
     async with driver.session() as session:
-        query = "MATCH (n:Entity {uuid: $uuid}) RETURN n.uuid as id, n.name as label, n.summary as summary, labels(n)[0] as type"
+        query = "MATCH (n:Entity {uuid: $uuid}) RETURN n.uuid as id, n.name as label, n.summary as summary, n.entity_type_id as entity_type_id"
         result = await session.run(query, uuid=uuid)
         record = await result.single()
         if not record:
@@ -483,6 +483,6 @@ async def get_node_detail(uuid: str, request: Request):
         return NodeDetail(
             id=record["id"],
             label=record["label"],
-            type=record["type"] or "Entity",
+            type=_normalize_type_from_id(record.get("entity_type_id")),
             summary=record["summary"]
         )
