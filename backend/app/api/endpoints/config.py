@@ -305,9 +305,10 @@ async def restart_services():
     import subprocess
     
     try:
-        # 执行 docker-compose restart
+        # 使用 up -d 重新创建容器以加载新的环境变量
+        # restart 不会重新读取 .env 文件
         result = subprocess.run(
-            ["docker-compose", "restart"],
+            ["docker-compose", "up", "-d"],
             cwd=str(DOCKER_COMPOSE_FILE.parent),
             capture_output=True,
             text=True,

@@ -113,6 +113,14 @@ if hasattr(g_core, 'resolve_extracted_nodes'):
 _original_attributes = node_ops.extract_attributes_from_nodes
 async def _hooked_attributes(*args, **kwargs):
     print("!!! [PRINT] ATTRIBUTES EXTRACTION START !!!", flush=True)
+    # 优化：不传 previous_episodes（原始文本），只依赖实体历史摘要和属性
+    # 这样可以大幅减少 LLM 请求长度（从 ~72k 字符降到 ~7k 字符）
+    if 'previous_episodes' in kwargs:
+        kwargs['previous_episodes'] = []
+    elif len(args) > 3:
+        args = list(args)
+        args[3] = []
+        args = tuple(args)
     res = await _original_attributes(*args, **kwargs)
     print(f"!!! [PRINT] ATTRIBUTES EXTRACTION END RESULT !!! Count: {len(res)}", flush=True)
     return res
@@ -299,7 +307,8 @@ def _sanitize_payload(data: Any) -> Any:
         for k, v in data.items():
             if k in _MAP_FIELDS_TO_STRINGIFY:
                 if isinstance(v, (dict, list)):
-                    new_dict[k] = json.dumps(v, ensure_ascii=True)
+                    # ensure_ascii=False 保留中文字符，避免转义为 Unicode 编码
+                    new_dict[k] = json.dumps(v, ensure_ascii=False)
                 else:
                     new_dict[k] = v
             else:
@@ -321,7 +330,13 @@ class ResilientOpenAIClient(OpenAIClient):
         msg_count = len(messages)
         max_tokens = kwargs.get('max_tokens', 8192)
         
-        print(f"!!! [PRINT] LLM REQUEST START - Model: {response_model.__name__ if response_model else 'None'} - Msg count: {msg_count}", flush=True)
+        # 计算消息总长度用于诊断
+        total_chars = sum(len(getattr(m, 'content', '') or '') for m in messages) if messages else 0
+        print(f"!!! [PRINT] LLM REQUEST START - Model: {response_model.__name__ if response_model else 'None'} - Msg count: {msg_count} - Total chars: {total_chars}", flush=True)
+        if total_chars == 0:
+            logger.error("LLM REQUEST has EMPTY content! Messages will be logged.")
+            for i, m in enumerate(messages or []):
+                logger.error(f"Message {i}: {repr(m)[:500]}")
 
         token = _current_response_model.set(response_model)
         max_retries = 5
@@ -575,6 +590,24 @@ class ResilientOpenAIClient(OpenAIClient):
                         else:
                             flattened.append(item)
                     new_dict['contradicted_facts'] = flattened
+            
+            # 修复 source_entity_id 和 target_entity_id 类型错误
+            # LLM 有时会返回 {"id": 0, "name": "xxx"} 而不是整数
+            for id_field in ['source_entity_id', 'target_entity_id', 'source_id', 'target_id']:
+                if id_field in new_dict:
+                    val = new_dict[id_field]
+                    if isinstance(val, dict):
+                        # 从 dict 中提取 id 字段
+                        extracted_id = val.get('id', val.get('entity_id', 0))
+                        logger.warning(f"Converting {id_field} from dict to int: {val} -> {extracted_id}")
+                        new_dict[id_field] = extracted_id
+                    elif not isinstance(val, int):
+                        # 尝试转换为整数
+                        try:
+                            new_dict[id_field] = int(val)
+                        except (TypeError, ValueError):
+                            logger.warning(f"Invalid {id_field} value: {val}, setting to 0")
+                            new_dict[id_field] = 0
             
             return new_dict
         return data
