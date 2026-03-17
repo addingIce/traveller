@@ -374,7 +374,19 @@ class ResilientOpenAIClient(OpenAIClient):
                             # 排除规则：不提取通用角色名（注意：消息中的 role:user 是 API 格式，不是故事角色）
                             exclusion_rule = "\n\nCRITICAL EXCLUSION RULE: Do NOT extract 'user', '讲述者', 'narrator', 'speaker', 'assistant' as entities. These are API message roles (like role:user), NOT characters in the story. Ignore them completely."
                             
-                            combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule
+                            # 严格实体提取规则：只提取有名字的重要实体
+                            strict_entity_rule = """
+\n\nSTRICT ENTITY EXTRACTION RULES:
+- ONLY extract entities with PROPER NAMES (e.g., "唐三", "小舞", "史莱克学院", "佛怒唐莲")
+- DO NOT extract generic references: "少年", "老者", "那人", "少女", "男子", "女子", "孩子", "老人"
+- DO NOT extract generic locations: "一个房间", "那座山", "这里", "那里"
+- DO NOT extract generic items: "一把剑", "那件衣服", "这个东西"
+- DO NOT extract abstract concepts without names
+- ONLY extract characters that appear multiple times or have significant roles
+- When in doubt about an entity's importance, DO NOT extract it
+- Quality over quantity: 5 important entities are better than 20 minor ones"""
+
+                            combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule + strict_entity_rule
                             
                             if hasattr(last_msg_obj, 'content'):
                                 last_msg_obj.content = last_msg + combined_rules

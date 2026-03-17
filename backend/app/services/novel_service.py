@@ -409,7 +409,10 @@ async def monitor_entity_extraction(
     neo4j_driver,
     status_store: dict
 ) -> None:
-    """监控实体提取进度，直到完成或小说被删除"""
+    """监控实体提取进度，直到完成或小说被删除
+    
+    改进：使用 Episodic 节点计数判断处理是否完成，更精确可靠
+    """
     if not neo4j_driver:
         return
     
@@ -425,6 +428,32 @@ async def monitor_entity_extraction(
                 return record is not None
         except Exception:
             return False
+    
+    async def get_episodic_count() -> int:
+        """获取已创建的 Episodic 节点数"""
+        try:
+            async with neo4j_driver.session() as session:
+                result = await session.run(
+                    "MATCH (e:Episodic {group_id: $group_id}) RETURN COUNT(e) as count",
+                    group_id=collection_name
+                )
+                record = await result.single()
+                return record["count"] if record else 0
+        except Exception:
+            return 0
+    
+    async def get_entity_count() -> int:
+        """获取实体数量"""
+        try:
+            async with neo4j_driver.session() as session:
+                result = await session.run(
+                    "MATCH (e:Entity {group_id: $group_id}) RETURN COUNT(DISTINCT e) as count",
+                    group_id=collection_name
+                )
+                record = await result.single()
+                return record["count"] if record else 0
+        except Exception:
+            return 0
     
     # 首先检查小说是否存在，不存在则直接退出
     if not await check_novel_exists():
@@ -443,12 +472,16 @@ async def monitor_entity_extraction(
             "title": collection_name,
         }
     
-    max_check_count = 60
+    max_check_count = 120  # 增加最大检查次数
     check_interval = 10
-    min_monitor_time = 180
     stable_count = 0
-    stable_threshold = 7
+    stable_threshold = 3  # 减少稳定阈值，因为 Episodic 已确认完成
     last_entity_count = 0
+    all_episodics_created = False
+    
+    # 获取预期的总 chunk 数
+    total_chunks = status_store.get(collection_name, {}).get("total_chunks", 0)
+    print(f"[INFO] {collection_name}: Monitoring started, expecting {total_chunks} chunks")
     
     try:
         for i in range(max_check_count):
@@ -465,78 +498,88 @@ async def monitor_entity_extraction(
                 print(f"[INFO] {collection_name}: Removed from status_store, stopping monitoring")
                 return
             
-            try:
-                async with neo4j_driver.session() as session:
-                    count_query = """
-                    MATCH (e:Entity {group_id: $group_id})
-                    RETURN COUNT(DISTINCT e) as count
-                    """
-                    result = await session.run(count_query, group_id=collection_name)
-                    record = await result.single()
-                    entity_count = record["count"] if record else 0
-            except Exception as e:
-                print(f"[ERROR] Failed to check entity count: {e}")
+            # 获取 Episodic 和 Entity 计数
+            episodic_count = await get_episodic_count()
+            entity_count = await get_entity_count()
+            
+            # 更新 status_store 中的进度
+            if total_chunks > 0:
+                status_store[collection_name]["chunks_processed"] = min(episodic_count, total_chunks)
+                # 计算实体提取进度百分比
+                progress = (episodic_count / total_chunks) * 100
+                status_store[collection_name]["progress"] = round(progress, 1)
+            
+            # 阶段 1：等待所有 Episodic 节点创建完成
+            if not all_episodics_created:
+                if total_chunks > 0 and episodic_count >= total_chunks:
+                    all_episodics_created = True
+                    status_store[collection_name]["progress"] = 100.0  # 所有 Episodic 已创建
+                    print(f"[INFO] {collection_name}: All {episodic_count} Episodic nodes created, watching entity stability")
+                elif time_elapsed > 300:  # 5 分钟后假设已完成
+                    all_episodics_created = True
+                    status_store[collection_name]["progress"] = 100.0
+                    print(f"[INFO] {collection_name}: Timeout waiting for Episodics ({episodic_count}/{total_chunks}), proceeding with entity check")
+                else:
+                    print(f"[DEBUG] {collection_name}: Waiting for Episodics ({episodic_count}/{total_chunks}), {entity_count} entities")
+                    continue
+            
+            # 阶段 2：检查实体稳定性
+            if entity_count == 0:
+                print(f"[DEBUG] {collection_name}: Waiting for entities (Episodics: {episodic_count})")
                 continue
             
-            if entity_count == 0:
-                print(f"[DEBUG] {collection_name}: Waiting for entities (0/{i+1})")
-                continue
-            elif entity_count > 0:
-                if status_store.get(collection_name, {}).get("status") == "completed":
-                    status_store[collection_name]["status"] = "extracting"
+            # 更新状态为 extracting
+            if status_store.get(collection_name, {}).get("status") == "completed":
+                status_store[collection_name]["status"] = "extracting"
+                try:
+                    async with neo4j_driver.session() as session:
+                        await session.run(
+                            "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'extracting'",
+                            cn=collection_name
+                        )
+                        print(f"[INFO] {collection_name}: Entity extraction started ({entity_count} entities)")
+                except Exception as e:
+                    print(f"[ERROR] {collection_name}: Failed to update status: {e}")
+            
+            # 检查实体稳定性
+            if entity_count == last_entity_count:
+                stable_count += 1
+                print(f"[DEBUG] {collection_name}: Entity stable {stable_count}/{stable_threshold} ({entity_count} entities)")
+                
+                if stable_count >= stable_threshold:
+                    # 实体稳定，执行去重并标记完成
+                    status_store[collection_name]["stage"] = "dedup"
+                    try:
+                        dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                        if dedup_stats.get("removed_nodes", 0) > 0:
+                            print(
+                                f"[INFO] {collection_name}: Deduplicated entities "
+                                f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
+                            )
+                    except Exception as dedup_error:
+                        print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
+
+                    status_store[collection_name]["status"] = "ready"
+                    status_store[collection_name]["stage"] = "completed"
                     try:
                         async with neo4j_driver.session() as session:
-                            update_query = """
-                            MATCH (n:Novel {collection_name: $collection_name})
-                            SET n.status = 'extracting'
-                            RETURN n
-                            """
-                            await session.run(update_query, collection_name=collection_name)
-                            print(f"[INFO] {collection_name}: Entity extraction started ({entity_count} entities)")
+                            await session.run(
+                                "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'ready'",
+                                cn=collection_name
+                            )
+                            print(f"[INFO] {collection_name}: Entity extraction completed ({entity_count} entities)")
                     except Exception as e:
-                        print(f"[ERROR] Failed to update Novel node status: {e}")
-                
-                if time_elapsed >= min_monitor_time:
-                    if entity_count == last_entity_count:
-                        stable_count += 1
-                        print(f"[DEBUG] {collection_name}: Stable count {stable_count}/{stable_threshold} ({entity_count} entities)")
-                        
-                        if stable_count >= stable_threshold:
-                            status_store[collection_name]["stage"] = "dedup"  # 进入去重阶段
-                            try:
-                                dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
-                                if dedup_stats.get("removed_nodes", 0) > 0:
-                                    print(
-                                        f"[INFO] {collection_name}: Deduplicated entities "
-                                        f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
-                                    )
-                            except Exception as dedup_error:
-                                print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
-
-                            status_store[collection_name]["status"] = "ready"
-                            status_store[collection_name]["stage"] = "completed"  # 全部完成
-                            try:
-                                async with neo4j_driver.session() as session:
-                                    update_query = """
-                                    MATCH (n:Novel {collection_name: $collection_name})
-                                    SET n.status = 'ready'
-                                    RETURN n
-                                    """
-                                    await session.run(update_query, collection_name=collection_name)
-                                    print(f"[INFO] {collection_name}: Entity extraction completed ({entity_count} entities)")
-                            except Exception as e:
-                                print(f"[ERROR] Failed to update Novel node status: {e}")
-                            return
-                    else:
-                        stable_count = 0
-                        last_entity_count = entity_count
-                        print(f"[DEBUG] {collection_name}: Extracting ({entity_count} entities)")
-                else:
-                    last_entity_count = entity_count
-                    print(f"[DEBUG] {collection_name}: Monitoring ({entity_count} entities, {time_elapsed}s elapsed)")
+                        print(f"[ERROR] {collection_name}: Failed to update status: {e}")
+                    return
+            else:
+                stable_count = 0
+                print(f"[DEBUG] {collection_name}: Entity count changed ({last_entity_count} -> {entity_count})")
+            
+            last_entity_count = entity_count
         
+        # 超时处理
         if last_entity_count > 0:
-            status_store[collection_name]["stage"] = "dedup"  # 进入去重阶段
+            status_store[collection_name]["stage"] = "dedup"
             try:
                 dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
                 if dedup_stats.get("removed_nodes", 0) > 0:
@@ -548,15 +591,13 @@ async def monitor_entity_extraction(
                 print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
 
             status_store[collection_name]["status"] = "ready"
-            status_store[collection_name]["stage"] = "completed"  # 全部完成
+            status_store[collection_name]["stage"] = "completed"
             try:
                 async with neo4j_driver.session() as session:
-                    update_query = """
-                    MATCH (n:Novel {collection_name: $collection_name})
-                    SET n.status = 'ready'
-                    RETURN n
-                    """
-                    await session.run(update_query, collection_name=collection_name)
+                    await session.run(
+                        "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'ready'",
+                        cn=collection_name
+                    )
                     print(f"[INFO] {collection_name}: Entity extraction completed (timeout, {last_entity_count} entities)")
             except Exception as e:
                 print(f"[ERROR] Failed to update Novel node status: {e}")
@@ -725,20 +766,21 @@ async def process_novel_task(
             
             await asyncio.sleep(batch_delay)
         
-        status_store[collection_name]["status"] = "completed"
-        status_store[collection_name]["stage"] = "extracting"  # 进入实体抽取阶段
-        status_store[collection_name]["progress"] = 100.0
+        # 写入完成，直接进入实体提取阶段
+        status_store[collection_name]["status"] = "extracting"
+        status_store[collection_name]["stage"] = "extracting"
+        status_store[collection_name]["progress"] = 0.0  # 实体提取进度从 0 开始
         
         if neo4j_driver:
             try:
                 async with neo4j_driver.session() as session:
                     update_novel_query = """
                     MATCH (n:Novel {collection_name: $collection_name})
-                    SET n.status = 'completed'
+                    SET n.status = 'extracting'
                     RETURN n
                     """
                     await session.run(update_novel_query, collection_name=collection_name)
-                    print(f"[INFO] Updated Novel node status to 'completed': {collection_name}")
+                    print(f"[INFO] Updated Novel node status to 'extracting': {collection_name}")
             except Exception as e:
                 print(f"[ERROR] Failed to update Novel node status: {e}")
         
