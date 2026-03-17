@@ -30,3 +30,4 @@ data/novels/
 
 # Config files with secrets
 backend/app/config.yaml
+AGENTS.md
