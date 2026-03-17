@@ -56,28 +56,258 @@ class ActionParser:
             return {"action": None, "dialogue": user_input, "thought": None, "intensity": 3, "metadata": {"fallback": True, "combat": False}}
 
 class SafetyGuard:
+    """指令注入防御层 - 纯规则检测"""
+    
+    # 扩展的注入模式（中英文）
+    FORBIDDEN_PATTERNS = [
+        # 角色劫持
+        r"ignore\s+(previous|all)\s+instructions?",
+        r"forget\s+(everything|all)",
+        r"system\s*prompt",
+        r"you\s+are\s+now\s+a",
+        r"jailbreak",
+        r"扮演.*(系统|管理员|导演|DM|AI)",
+        r"忽略.*(指令|设定|规则)",
+        r"忘记.*(设定|规则)",
+        # 输出操控
+        r"output\s+(only|exactly)",
+        r"respond\s+only\s+with",
+        r"只输出|只回复",
+        r"强制输出",
+        r"必须输出",
+        # 信息泄露
+        r"reveal\s+(your|the)\s+prompt",
+        r"show\s+me\s+(your|the)\s+instructions?",
+        r"显示.*(提示词|指令|系统)",
+        r"泄露.*设定",
+        r"告诉我.*系统",
+        # 世界观破坏
+        r"destroy\s+the\s+world",
+        r"break\s+(the\s+)?rules?",
+        r"毁灭世界",
+        r"破坏规则",
+        # 角色扮演劫持
+        r"从现在开始你(是|扮演)",
+        r"不再(是|作为)",
+        r"退出.*模式",
+        r"你是(一个|名|位)?(管理员|系统|AI|导演|DM|超级用户)",
+        r"你(现在)?是一个(管理员|系统|AI|导演)",
+        r"你(现在)?就是(管理员|系统|AI|导演)",
+    ]
+    
+    # 危险关键词（立即拒绝）
+    DANGER_KEYWORDS = [
+        "jailbreak", "越狱", "逃逸",
+        "system override", "系统覆盖",
+        "god mode", "上帝模式",
+        "developer mode", "开发者模式",
+    ]
+    
     @staticmethod
     def sanitize(text: str) -> str:
-        """基础指令注入防御层"""
-        # 过滤常见的注入关键词（针对 LLM 指令注入）
-        forbidden_patterns = [
-            r"ignore previous instructions",
-            r"forget everything",
-            r"system prompt",
-            r"you are now a",
-            r"jailbreak",
-            r"强制输出",
-            r"忽略所有指令"
-        ]
+        """过滤危险内容，返回清理后的文本"""
         sanitized = text
-        for pattern in forbidden_patterns:
-            sanitized = re.sub(pattern, "[指令过滤]", sanitized, flags=re.IGNORECASE)
+        for pattern in SafetyGuard.FORBIDDEN_PATTERNS:
+            sanitized = re.sub(pattern, "[已过滤]", sanitized, flags=re.IGNORECASE)
         
         # 长度限制
         if len(sanitized) > 2000:
             sanitized = sanitized[:2000] + "...(文本过长已截断)"
             
         return sanitized
+    
+    @staticmethod
+    def detect_injection(text: str) -> Dict[str, Any]:
+        """
+        检测注入攻击
+        返回: {
+            'is_safe': bool,
+            'risk_level': 'none' | 'low' | 'high',
+            'matched_patterns': list[str],
+            'danger_keywords': list[str]
+        }
+        """
+        matched_patterns = []
+        danger_keywords = []
+        risk_level = "none"
+        
+        # 检查危险关键词（高风险）
+        text_lower = text.lower()
+        for keyword in SafetyGuard.DANGER_KEYWORDS:
+            if keyword.lower() in text_lower:
+                danger_keywords.append(keyword)
+                risk_level = "high"
+        
+        # 检查注入模式
+        for pattern in SafetyGuard.FORBIDDEN_PATTERNS:
+            if re.search(pattern, text, re.IGNORECASE):
+                matched_patterns.append(pattern)
+                if risk_level != "high":
+                    risk_level = "low"
+        
+        # 多模式匹配 → 提升风险等级（组合攻击）
+        if len(matched_patterns) >= 2 and risk_level == "low":
+            risk_level = "high"
+        
+        is_safe = risk_level == "none"
+        
+        return {
+            "is_safe": is_safe,
+            "risk_level": risk_level,
+            "matched_patterns": matched_patterns,
+            "danger_keywords": danger_keywords,
+        }
+    
+    @staticmethod
+    def validate(user_input: str) -> tuple:
+        """
+        验证用户输入
+        返回: (is_safe, sanitized_input, warning_message)
+        """
+        detection = SafetyGuard.detect_injection(user_input)
+        
+        if detection["risk_level"] == "high":
+            # 高风险：直接拒绝
+            warning = f"检测到危险关键词: {', '.join(detection['danger_keywords'])}"
+            return (False, "", warning)
+        
+        if detection["risk_level"] == "low":
+            # 低风险：过滤后继续
+            sanitized = SafetyGuard.sanitize(user_input)
+            warning = f"已过滤潜在风险内容"
+            return (True, sanitized, warning)
+        
+        # 安全：原样返回
+        return (True, user_input, "")
+
+
+class GraphImpactHandler:
+    """
+    图谱变更触发器 - 处理 world_impact 触发的图谱更新
+    
+    工作原理:
+    1. 通过 Graphiti 摄入变更消息（自动创建 session 级实体）
+    2. 查询新创建的实体/边
+    3. 调用 mark_override 设置 priority=10（高优先级覆盖原始数据）
+    """
+    
+    def __init__(self, neo4j_driver, graphiti_url: str = "http://localhost:8003"):
+        self.driver = neo4j_driver
+        self.graphiti_url = graphiti_url
+    
+    async def process_impact(
+        self,
+        session_id: str,
+        novel_id: str,
+        world_impact: Dict[str, Any],
+        story_text: str
+    ) -> Dict[str, Any]:
+        """
+        处理 world_impact，更新图谱
+        
+        返回: {
+            'success': bool,
+            'entities_updated': int,
+            'edges_updated': int,
+            'error': str | None
+        }
+        """
+        import uuid
+        import httpx
+        
+        result = {
+            "success": False,
+            "entities_updated": 0,
+            "edges_updated": 0,
+            "error": None
+        }
+        
+        if not session_id:
+            result["error"] = "session_id is required"
+            return result
+        
+        try:
+            # 1. 通过 Graphiti 摄入变更消息
+            reason = world_impact.get("reason", "世界状态发生变化")
+            message_uuid = str(uuid.uuid4())
+            payload = {
+                "group_id": session_id,
+                "messages": [
+                    {
+                        "content": f"世界状态变化：{reason}\n剧情摘要：{story_text[:500]}",
+                        "uuid": message_uuid,
+                        "role_type": "system",
+                        "role": "world_impact",
+                        "name": "World Impact",
+                        "source_description": "world_impact",
+                    }
+                ],
+            }
+            
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(f"{self.graphiti_url}/messages", json=payload)
+                if resp.status_code >= 400:
+                    result["error"] = f"Graphiti ingest failed: {resp.status_code}"
+                    return result
+            
+            # 2. 等待 Graphiti 处理（短暂延迟）
+            import asyncio
+            await asyncio.sleep(1.0)
+            
+            # 3. 查询新创建的实体和边，标记为 override
+            async with self.driver.session() as session:
+                # 查询该 session 下的实体
+                entity_query = """
+                MATCH (e:Entity {group_id: $session_id})
+                WHERE e.source IS NULL OR e.source = 'auto'
+                RETURN e.uuid as uuid
+                """
+                entity_result = await session.run(entity_query, session_id=session_id)
+                entity_uuids = [r["uuid"] async for r in entity_result]
+                
+                # 查询该 session 下的边
+                edge_query = """
+                MATCH ()-[r:RELATES_TO]->()
+                WHERE r.group_id = $session_id
+                AND (r.source IS NULL OR r.source = 'auto')
+                RETURN r.uuid as uuid
+                """
+                edge_result = await session.run(edge_query, session_id=session_id)
+                edge_uuids = [r["uuid"] async for r in edge_result]
+                
+                # 4. 标记为 override (priority=10)
+                if entity_uuids:
+                    await session.run(
+                        """
+                        MATCH (e:Entity)
+                        WHERE e.uuid IN $uuids
+                        SET e.source = 'override', e.priority = 10
+                        """,
+                        uuids=entity_uuids
+                    )
+                    result["entities_updated"] = len(entity_uuids)
+                
+                if edge_uuids:
+                    await session.run(
+                        """
+                        MATCH ()-[r:RELATES_TO]->()
+                        WHERE r.uuid IN $uuids
+                        SET r.source = 'override', r.priority = 10
+                        """,
+                        uuids=edge_uuids
+                    )
+                    result["edges_updated"] = len(edge_uuids)
+            
+            result["success"] = True
+            print(f"[INFO] GraphImpactHandler: session={session_id}, "
+                  f"entities={result['entities_updated']}, edges={result['edges_updated']}")
+            
+        except Exception as e:
+            result["error"] = str(e)
+            print(f"[ERROR] GraphImpactHandler failed: {e}")
+        
+        return result
+
 
 class ContextAssembler:
     def __init__(self, zep_client, neo4j_driver):

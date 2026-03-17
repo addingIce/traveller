@@ -19,7 +19,7 @@ MODEL_DIRECTOR = os.getenv("MODEL_DIRECTOR", "gpt-4o")
 MODEL_PARSER = os.getenv("MODEL_PARSER", "gpt-4o-mini")
 GRAPHITI_API_URL = os.getenv("GRAPHITI_API_URL", "http://localhost:8003")
 
-from app.services.director_service import ActionParser, ContextAssembler, DirectorAI
+from app.services.director_service import ActionParser, ContextAssembler, DirectorAI, SafetyGuard, GraphImpactHandler
 from app.models.schemas import ChatRequest, ChatResponse, DirectorMode
 
 # 延迟初始化客户端以确保环境变量已加载
@@ -74,10 +74,37 @@ async def chat_interact(req: ChatRequest, request: Request):
         parser = ActionParser(aclient, MODEL_PARSER)
         assembler = ContextAssembler(zep, neo4j)
         director = DirectorAI(aclient, MODEL_DIRECTOR)
-        from app.services.director_service import SafetyGuard
+
+        # 1.5 注入检测
+        is_safe, sanitized_input, warning = SafetyGuard.validate(req.message)
+        if not is_safe:
+            # 高风险：直接拒绝
+            print(f"[SAFETY] Injection blocked: session={req.session_id}, warning={warning}")
+            from app.models.schemas import IntentSummary, WorldImpact
+            return ChatResponse(
+                story_text="[系统] 检测到异常输入，请重新描述您的行动。",
+                user_intent_summary=IntentSummary(
+                    action=None,
+                    dialogue=None,
+                    thought=None
+                ),
+                world_impact=WorldImpact(
+                    world_state_changed=False,
+                    reason="injection_blocked"
+                ),
+                ui_hints=["injection_blocked"],
+                reached_waypoints=[]
+            )
+        
+        if warning:
+            # 低风险：记录但继续处理
+            print(f"[SAFETY] Input filtered: session={req.session_id}, warning={warning}")
+        
+        # 使用清理后的输入
+        user_input = sanitized_input or req.message
 
         # 2. 解析意图 (Action Parsing)
-        sanitized_message = SafetyGuard.sanitize(req.message)
+        sanitized_message = SafetyGuard.sanitize(user_input)
         intent = await parser.parse_intent(sanitized_message)
         
         # 3. 装配上下文 (Context Assembly)
@@ -140,15 +167,30 @@ async def chat_interact(req: ChatRequest, request: Request):
         except Exception as ne:
             print(f"[ERROR] Session state persistence failed: {ne}")
 
-        # 8. 图谱缓存脏标记
-        if ai_data.get("world_impact", {}).get("world_state_changed"):
+        # 8. 图谱缓存脏标记 + 图谱变更触发器
+        world_impact = ai_data.get("world_impact", {})
+        if world_impact.get("world_state_changed"):
             cache = request.app.state.graph_cache.get("items", {})
             item = cache.get(req.novel_id) or {}
             item["dirty"] = True
             cache[req.novel_id] = item
-            reason = ai_data.get("world_impact", {}).get("reason") or "世界状态发生变化"
+            
+            # 使用 GraphImpactHandler 处理图谱更新
+            reason = world_impact.get("reason") or "世界状态发生变化"
             story_text = ai_data.get("story_text", "") or ""
-            asyncio.create_task(_send_world_impact_to_graphiti(req.session_id, reason, story_text))
+            
+            async def process_graph_impact():
+                handler = GraphImpactHandler(neo4j, GRAPHITI_API_URL)
+                result = await handler.process_impact(
+                    req.session_id, req.novel_id,
+                    world_impact,
+                    story_text
+                )
+                if not result.get("success"):
+                    # 降级：使用原有的简单摄入方式
+                    await _send_world_impact_to_graphiti(req.session_id, reason, story_text)
+            
+            asyncio.create_task(process_graph_impact())
 
         return ChatResponse(**ai_data)
 
