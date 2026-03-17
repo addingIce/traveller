@@ -91,6 +91,25 @@ _original_bulk = bulk_mod.add_nodes_and_edges_bulk
 async def _hooked_bulk(driver, episodic_nodes, episodic_edges, entity_nodes, entity_edges, embedder):
     msg = f"!!! [PRINT] BULK SAVE CALL !!! Entities: {len(entity_nodes)}, Edges: {len(entity_edges)}, Episodic: {len(episodic_nodes)}"
     print(msg, flush=True)
+    
+    # 清理实体节点中的非原始类型字段（Neo4j 不支持嵌套 Map）
+    # 这些字段是 graphiti 内部用于去重和矛盾检测的，不应存入 Neo4j
+    fields_to_remove = ['duplicate_fact_idx', 'contradicted_facts']
+    for node in entity_nodes:
+        for field in fields_to_remove:
+            if hasattr(node, field):
+                delattr(node, field)
+            elif isinstance(node, dict) and field in node:
+                del node[field]
+    
+    # 同样清理边（edges）
+    for edge in entity_edges:
+        for field in fields_to_remove:
+            if hasattr(edge, field):
+                delattr(edge, field)
+            elif isinstance(edge, dict) and field in edge:
+                del edge[field]
+    
     # 不再注入 Mock 向量，使用真实 Embedding
     return await _original_bulk(driver, episodic_nodes, episodic_edges, entity_nodes, entity_edges, embedder)
 

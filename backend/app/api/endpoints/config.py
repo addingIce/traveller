@@ -305,9 +305,17 @@ async def restart_services():
     import subprocess
     
     try:
-        # 使用 up -d 重新创建容器以加载新的环境变量
-        # restart 不会重新读取 .env 文件
-        result = subprocess.run(
+        # 先停止所有容器（down 会释放资源）
+        down_result = subprocess.run(
+            ["docker-compose", "down"],
+            cwd=str(DOCKER_COMPOSE_FILE.parent),
+            capture_output=True,
+            text=True,
+            timeout=60
+        )
+        
+        # 再启动容器（up -d 会重新读取 .env 文件）
+        up_result = subprocess.run(
             ["docker-compose", "up", "-d"],
             cwd=str(DOCKER_COMPOSE_FILE.parent),
             capture_output=True,
@@ -315,16 +323,16 @@ async def restart_services():
             timeout=120
         )
         
-        if result.returncode == 0:
+        if up_result.returncode == 0:
             return {
                 "success": True,
-                "message": "Docker 服务重启成功",
-                "output": result.stdout
+                "message": "Docker 服务重启成功（已重新加载配置）",
+                "output": up_result.stdout
             }
         else:
             raise HTTPException(
                 status_code=500,
-                detail=f"重启失败: {result.stderr}"
+                detail=f"重启失败: {up_result.stderr}"
             )
     except subprocess.TimeoutExpired:
         raise HTTPException(
