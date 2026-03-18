@@ -4,6 +4,17 @@ import G6 from '@antv/g6';
 import { fetchKnowledgeGraph, chatInteract, ChatResponse, searchGraph, fetchGraphFacts, fetchNodeDetail, NovelInfo, NovelStatus, uploadNovel, getNovelsList, getNovelStatus, deleteNovel, getConfig, updateConfig, reloadConfig, resetConfig, getConfigPresets, restartServices, getServicesStatus, SystemConfig, SessionInfo, ChapterInfo, listSessions, getChapters, createSession, createBookmark, branchSession, DirectorMode, listBookmarks, BookmarkInfo, deleteSession, deleteBookmark, getSessionMessages, SessionMessage, getSessionWaypoints, WaypointStatus } from './api';
 import { Search, Info, Target, MessageSquare, Settings, Save, RotateCcw, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
 
+// 拆分出的组件
+import { Header } from './components/Header/Header';
+import { UploadModal } from './components/Modals/UploadModal';
+import { NewSessionModal } from './components/Modals/NewSessionModal';
+import { BookmarkModal } from './components/Modals/BookmarkModal';
+import { BranchModal } from './components/Modals/BranchModal';
+import { ChapterModal } from './components/Modals/ChapterModal';
+import { GraphToolbar } from './components/Graph/GraphToolbar';
+import { ChatInput } from './components/Chat/ChatInput';
+import { ModeSelector } from './components/Chat/ModeSelector';
+
 const SESSION_KEY = "traveller_session_id";
 const TERMINAL_NOVEL_STATUSES = new Set<NovelStatus>(['ready', 'failed']);
 const IN_PROGRESS_NOVEL_STATUSES = new Set<NovelStatus>(['queued', 'processing', 'completed', 'extracting']);
@@ -1332,29 +1343,7 @@ const scrollToSection = (sectionId: string) => {
     return (
         <div className="h-screen overflow-hidden bg-[#0f172a] text-[#f1f5f9] font-sans selection:bg-sky-500/30 flex flex-col">
             {/* Header */}
-            <header className="border-b border-white/10 px-8 py-4 flex justify-between items-center backdrop-blur-md sticky top-0 z-50">
-                <div className="flex items-center gap-3">
-                    <div className="w-10 h-10 bg-gradient-to-br from-sky-400 to-indigo-500 rounded-xl flex items-center justify-center shadow-lg shadow-sky-500/20">
-                        <Brain className="text-white w-6 h-6" />
-                    </div>
-                    <span className="text-xl font-bold tracking-tight bg-gradient-to-r from-sky-400 to-white bg-clip-text text-transparent">
-                        TRAVELLER ENGINE
-                    </span>
-                </div>
-                <div className="flex items-center gap-6 text-sm text-slate-400">
-                    <div className="flex items-center gap-2">
-                        <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse" />
-                        ZEP Connected
-                    </div>
-                    <button
-                        onClick={() => setShowConfigModal(true)}
-                        className="p-2 rounded-lg bg-white/5 hover:bg-white/10 hover:text-white text-slate-400 transition-all"
-                        title="系统配置"
-                    >
-                        <Settings className="w-5 h-5" />
-                    </button>
-                </div>
-            </header>
+            <Header onOpenConfig={() => setShowConfigModal(true)} />
 
             <main className="max-w-[1600px] mx-auto p-8 grid grid-cols-[350px_1fr] gap-8 flex-1 w-full min-h-0 overflow-hidden">
                 {/* Sidebar */}
@@ -1501,51 +1490,14 @@ const scrollToSection = (sectionId: string) => {
                     </div>
 
                     {/* 上传标题模态框 */}
-                    {showUploadModal && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
-                            <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-md shadow-2xl animate-in zoom-in duration-200">
-                                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
-                                    <BookOpen className="w-5 h-5 text-sky-400" />
-                                    上传小说
-                                </h3>
-                                <div className="space-y-4">
-                                    <div>
-                                        <label className="block text-sm text-slate-400 mb-2">小说标题</label>
-                                        <input
-                                            type="text"
-                                            value={uploadTitle}
-                                            onChange={(e) => setUploadTitle(e.target.value)}
-                                            placeholder="请输入小说标题"
-                                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm focus:outline-none focus:border-sky-500 transition-all"
-                                            autoFocus
-                                            onKeyDown={(e) => {
-                                                if (e.key === 'Enter') {
-                                                    handleConfirmUpload();
-                                                }
-                                            }}
-                                        />
-                                    </div>
-                                    <div className="text-xs text-slate-500">
-                                        已选择文件: {selectedFile?.name}
-                                    </div>
-                                    <div className="flex gap-3 pt-2">
-                                        <button
-                                            onClick={handleCancelUpload}
-                                            className="flex-1 px-4 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all"
-                                        >
-                                            取消
-                                        </button>
-                                        <button
-                                            onClick={handleConfirmUpload}
-                                            className="flex-1 px-4 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm transition-all"
-                                        >
-                                            开始上传
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    )}
+                    <UploadModal
+                        visible={showUploadModal}
+                        uploadTitle={uploadTitle}
+                        selectedFileName={selectedFile?.name || null}
+                        onTitleChange={setUploadTitle}
+                        onConfirm={handleConfirmUpload}
+                        onCancel={handleCancelUpload}
+                    />
 
                     {/* Search Panel with smooth height transition */}
                     <div 
@@ -1921,85 +1873,14 @@ const scrollToSection = (sectionId: string) => {
 
                         {/* Visualizer Body */}
                         <div className="relative bg-black/20 flex-1 overflow-hidden" style={{ display: activeTab === 'graph' ? 'block' : 'none' }}>
-                            <div className="absolute top-4 left-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm text-[10px] uppercase tracking-widest text-slate-300">
-                                {[
-                                    { key: 'all', label: '全部' },
-                                    { key: 'person', label: '人物' },
-                                    { key: 'place', label: '地点' },
-                                    { key: 'org', label: '组织' },
-                                    { key: 'item', label: '物品' },
-                                    { key: 'concept', label: '概念' },
-                                ].map((t) => {
-                                    const allTypes = ['person', 'place', 'org', 'item', 'concept'];
-                                    const isAll = t.key === 'all';
-                                    const active = isAll
-                                        ? allTypes.every(type => graphTypeFilters.has(type))
-                                        : graphTypeFilters.has(t.key);
-                                    return (
-                                        <button
-                                            key={t.key}
-                                            onClick={() => {
-                                                setGraphTypeFilters(prev => {
-                                                    if (isAll) {
-                                                        // 点击"全部"：切换选中/取消所有
-                                                        if (allTypes.every(type => prev.has(type))) {
-                                                            return new Set(); // 取消所有
-                                                        } else {
-                                                            return new Set(allTypes); // 选中所有
-                                                        }
-                                                    } else {
-                                                        // 其他按钮：toggle 逻辑
-                                                        const next = new Set(prev);
-                                                        if (next.has(t.key)) {
-                                                            next.delete(t.key);
-                                                        } else {
-                                                            next.add(t.key);
-                                                        }
-                                                        return next;
-                                                    }
-                                                });
-                                            }}
-                                            className={`px-2 py-1 rounded-lg border transition-all ${
-                                                active
-                                                    ? 'bg-sky-500/20 border-sky-400 text-sky-200'
-                                                    : 'border-white/10 text-slate-500 hover:text-white'
-                                            }`}
-                                        >
-                                            {t.label}
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                            <div className="absolute top-4 right-4 z-20 flex items-center gap-2 bg-slate-900/80 border border-white/10 rounded-xl p-2 backdrop-blur-sm">
-                                <button
-                                    onClick={fitGraphView}
-                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
-                                    title="图谱居中（最优尺寸）"
-                                >
-                                    <LocateFixed className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => zoomGraph(0.15)}
-                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
-                                    title="放大"
-                                >
-                                    <ZoomIn className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={() => zoomGraph(-0.15)}
-                                    className="p-2 rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
-                                    title="缩小"
-                                >
-                                    <ZoomOut className="w-4 h-4" />
-                                </button>
-                                <button
-                                    onClick={resetGraphZoom}
-                                    className="px-2 py-1 text-xs rounded-lg bg-white/5 hover:bg-white/10 text-slate-200 transition-colors"
-                                    title="1:1"
-                                >
-                                    1:1
-                                </button>
-                            </div>
+                            <GraphToolbar
+                                graphTypeFilters={graphTypeFilters}
+                                onFilterChange={setGraphTypeFilters}
+                                onFitView={fitGraphView}
+                                onZoomIn={() => zoomGraph(0.15)}
+                                onZoomOut={() => zoomGraph(-0.15)}
+                                onResetZoom={resetGraphZoom}
+                            />
                             {isGraphLoading && (
                                 <div className="absolute inset-0 z-10 flex flex-col items-center justify-center text-slate-500 backdrop-blur-md bg-black/40">
                                     <Loader2 className="w-12 h-12 mb-4 animate-spin opacity-50 text-indigo-400" />
@@ -2261,86 +2142,16 @@ const scrollToSection = (sectionId: string) => {
                             </div>
 
                             {/* Input Area */}
-                            <div className="p-4 bg-slate-800/80 border-t border-white/10 backdrop-blur-lg z-20">
-                                <div className="max-w-4xl mx-auto mb-2 flex items-center justify-between">
-                                    <div className="flex gap-2 text-[10px] font-bold uppercase tracking-widest">
-                                        <button
-                                            onClick={() => setInputMode('free')}
-                                            className={`px-3 py-1 rounded-full border transition-all ${
-                                                inputMode === 'free' ? 'bg-white/10 border-slate-400 text-slate-200' : 'border-white/10 text-slate-500 hover:text-white'
-                                            }`}
-                                        >
-                                            自由
-                                        </button>
-                                        <button
-                                            onClick={() => setInputMode('act')}
-                                            className={`px-3 py-1 rounded-full border transition-all ${
-                                                inputMode === 'act' ? 'bg-amber-500/20 border-amber-400 text-amber-200' : 'border-white/10 text-slate-500 hover:text-white'
-                                            }`}
-                                        >
-                                            动作
-                                        </button>
-                                        <button
-                                            onClick={() => setInputMode('say')}
-                                            className={`px-3 py-1 rounded-full border transition-all ${
-                                                inputMode === 'say' ? 'bg-sky-500/20 border-sky-400 text-sky-200' : 'border-white/10 text-slate-500 hover:text-white'
-                                            }`}
-                                        >
-                                            对白
-                                        </button>
-                                        <button
-                                            onClick={() => setInputMode('think')}
-                                            className={`px-3 py-1 rounded-full border transition-all ${
-                                                inputMode === 'think' ? 'bg-indigo-500/20 border-indigo-400 text-indigo-200' : 'border-white/10 text-slate-500 hover:text-white'
-                                            }`}
-                                        >
-                                            心理
-                                        </button>
-                                    </div>
-                                    <div className="text-[10px] text-slate-500">
-                                        {inputMode === 'act' && '动作输入模式'}
-                                        {inputMode === 'say' && '对白输入模式'}
-                                        {inputMode === 'think' && '心理输入模式'}
-                                        {inputMode === 'free' && '自由输入'}
-                                    </div>
-                                </div>
-                                <form
-                                    onSubmit={(e) => { e.preventDefault(); handleSendChat(); }}
-                                    className="flex gap-3 max-w-4xl mx-auto items-center relative"
-                                >
-                                    <input
-                                        type="text"
-                                        value={chatInput}
-                                        onChange={(e) => setChatInput(e.target.value)}
-                                        disabled={isChatting || !isNovelReady || isCurrentSessionRoot}
-                                        placeholder={
-                                            isCurrentSessionRoot 
-                                                ? "原始剧情线不可编辑，请创建平行宇宙进行剧情推演..."
-                                                : isNovelReady 
-                                                    ? (inputMode === 'act' 
-                                                        ? "执行动作..."
-                                                        : inputMode === 'say'
-                                                            ? "说出对白..."
-                                                            : inputMode === 'think'
-                                                                ? "心中暗想..."
-                                                                : "执行动作 / 说出对白 / 心中暗想...")
-                                                    : "作品尚未就绪，无法进行剧情推演..."
-                                        }
-                                        className={`flex-1 border rounded-full px-6 py-4 text-white focus:outline-none transition-colors shadow-inner ${
-                                            isNovelReady && !isCurrentSessionRoot
-                                                ? 'bg-black/40 border-white/10 focus:border-sky-500 focus:ring-1 focus:ring-sky-500'
-                                                : 'bg-slate-800 border-slate-700 text-slate-500 cursor-not-allowed'
-                                        }`}
-                                    />
-                                    <button
-                                        disabled={isChatting || !chatInput.trim() || !isNovelReady || isCurrentSessionRoot}
-                                        type="submit"
-                                        className="absolute right-2 px-4 py-2 bg-sky-500 hover:bg-sky-400 text-white rounded-full transition-all flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-sky-500/20 font-bold"
-                                    >
-                                        推进 <Send className="w-4 h-4 ml-1" />
-                                    </button>
-                                </form>
-                            </div>
+                            <ChatInput
+                                value={chatInput}
+                                mode={inputMode}
+                                isChatting={isChatting}
+                                isNovelReady={isNovelReady}
+                                isCurrentSessionRoot={isCurrentSessionRoot}
+                                onChange={setChatInput}
+                                onModeChange={setInputMode}
+                                onSubmit={handleSendChat}
+                            />
                         </div>
 
                     </div>
@@ -2348,173 +2159,47 @@ const scrollToSection = (sectionId: string) => {
             </main>
 
             {/* New Parallel Universe Modal */}
-            {showNewSessionModal && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-6 backdrop-blur-md bg-black/40">
-                    <div className="bg-slate-900 border border-white/10 rounded-3xl p-8 max-w-md w-full shadow-2xl animate-in zoom-in-95 duration-200">
-                        <h3 className="text-xl font-bold text-white mb-2 flex items-center gap-2">
-                            <Plus className="w-5 h-5 text-amber-500" />
-                            开启新的平行宇宙
-                        </h3>
-                        <div className="mb-6 p-3 bg-white/5 border border-white/5 rounded-xl">
-                            <div className="text-[10px] text-slate-500 uppercase tracking-widest mb-1">起始背景</div>
-                            <div className="text-sm text-slate-300 flex items-center gap-2">
-                                <BookOpen className="w-3.5 h-3.5 text-sky-400" />
-                                {startChapterTitle ? `从章节: ${startChapterTitle}` : "从小说开篇/全局背景开始"}
-                            </div>
-                        </div>
-                        <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-                            为这个全新的命运分支命名。它将作为一个独立的存档点，承载你与 AI 共同编撰的新故事。
-                        </p>
-                        <div className="space-y-4">
-                            <input
-                                type="text"
-                                value={newSessionName}
-                                onChange={(e) => setNewSessionName(e.target.value)}
-                                placeholder="例如：被改变的抉择 / 隐藏的真相..."
-                                className="w-full bg-black/30 border border-white/10 rounded-xl px-5 py-4 text-white focus:outline-none focus:border-amber-500 transition-all font-medium"
-                                autoFocus
-                            />
-                            <div className="flex gap-3">
-                                <button
-                                    onClick={() => setShowNewSessionModal(false)}
-                                    className="flex-1 px-4 py-3.5 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 font-medium transition-all"
-                                >
-                                    放弃
-                                </button>
-                                <button
-                                    onClick={handleCreateSession}
-                                    disabled={!newSessionName.trim()}
-                                    className="flex-1 px-4 py-3.5 rounded-xl bg-amber-500 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold transition-all shadow-lg shadow-amber-500/20"
-                                >
-                                    确认开启
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <NewSessionModal
+                visible={showNewSessionModal}
+                sessionName={newSessionName}
+                startChapterTitle={startChapterTitle}
+                onNameChange={setNewSessionName}
+                onConfirm={handleCreateSession}
+                onCancel={() => setShowNewSessionModal(false)}
+            />
 
             {/* Bookmark Modal */}
-            {showBookmarkModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in duration-200">
-                        <h3 className="text-lg font-semibold mb-4 flex items-center gap-2 text-amber-400">
-                            <Save className="w-5 h-5" />
-                            创建书签
-                        </h3>
-                        <p className="text-xs text-slate-400 mb-4">保存当前故事节点以便稍后分支到“平行宇宙”</p>
-                        <input
-                            type="text"
-                            value={bookmarkName}
-                            onChange={(e) => setBookmarkName(e.target.value)}
-                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:border-amber-500"
-                            placeholder="书签名称"
-                            autoFocus
-                        />
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => setShowBookmarkModal(false)}
-                                className="flex-1 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm"
-                            >
-                                取消
-                            </button>
-                            <button
-                                onClick={handleCreateBookmark}
-                                className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm"
-                            >
-                                确定
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <BookmarkModal
+                visible={showBookmarkModal}
+                bookmarkName={bookmarkName}
+                onNameChange={setBookmarkName}
+                onConfirm={handleCreateBookmark}
+                onCancel={() => setShowBookmarkModal(false)}
+            />
 
             {/* Branch From Bookmark Modal */}
-            {showBranchModal && (
-                <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-slate-800 border border-white/10 rounded-2xl p-6 w-full max-w-sm shadow-2xl animate-in zoom-in duration-200">
-                        <h3 className="text-lg font-semibold mb-2 flex items-center gap-2 text-amber-400">
-                            <Save className="w-5 h-5" />
-                            从书签开启分支
-                        </h3>
-                        <p className="text-xs text-slate-400 mb-4">
-                            {branchBookmarkName ? `基于书签「${branchBookmarkName}」创建新的平行宇宙` : "基于书签创建新的平行宇宙"}
-                        </p>
-                        <input
-                            type="text"
-                            value={branchSessionName}
-                            onChange={(e) => setBranchSessionName(e.target.value)}
-                            className="w-full bg-black/30 border border-white/10 rounded-xl px-4 py-2.5 text-sm mb-4 focus:outline-none focus:border-amber-500"
-                            placeholder="分支名称"
-                            autoFocus
-                        />
-                        <div className="flex gap-3">
-                            <button
-                                onClick={() => setShowBranchModal(false)}
-                                className="flex-1 px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm"
-                            >
-                                取消
-                            </button>
-                            <button
-                                onClick={handleConfirmBranch}
-                                disabled={!branchSessionName.trim()}
-                                className="flex-1 px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-600 text-white text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-                            >
-                                确认
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <BranchModal
+                visible={showBranchModal}
+                branchBookmarkName={branchBookmarkName}
+                branchSessionName={branchSessionName}
+                onNameChange={setBranchSessionName}
+                onConfirm={handleConfirmBranch}
+                onCancel={() => setShowBranchModal(false)}
+            />
 
             {/* Chapter Detail Modal */}
-            {showChapterModal && selectedChapter && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in">
-                    <div className="bg-slate-800 border border-white/10 rounded-2xl w-full max-w-2xl max-h-[80vh] shadow-2xl flex flex-col">
-                        {/* Header */}
-                        <div className="px-6 py-4 border-b border-white/10 flex justify-between items-center shrink-0">
-                            <h3 className="text-lg font-semibold text-sky-400 flex items-center gap-2">
-                                <BookOpen className="w-5 h-5" />
-                                {selectedChapter.title}
-                            </h3>
-                            <button
-                                onClick={() => setShowChapterModal(false)}
-                                className="p-2 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-all"
-                            >
-                                <X className="w-5 h-5" />
-                            </button>
-                        </div>
-                        {/* Content */}
-                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-                            <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-wrap">
-                                {selectedChapter.content || selectedChapter.content_preview}
-                            </p>
-                        </div>
-                        {/* Footer */}
-                        <div className="px-6 py-4 border-t border-white/10 flex justify-end gap-3 shrink-0">
-                            <button
-                                onClick={() => setShowChapterModal(false)}
-                                className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 text-sm transition-all"
-                            >
-                                关闭
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setShowChapterModal(false);
-                                    setStartChapterId(selectedChapter.id);
-                                    setStartChapterTitle(selectedChapter.title);
-                                    setNewSessionName(`基于: ${selectedChapter.title}`);
-                                    setShowNewSessionModal(true);
-                                }}
-                                className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm transition-all flex items-center gap-2"
-                            >
-                                <GitBranch className="w-4 h-4" />
-                                从本章开启平行宇宙
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <ChapterModal
+                visible={showChapterModal}
+                chapter={selectedChapter}
+                onClose={() => setShowChapterModal(false)}
+                onCreateBranch={(chapter) => {
+                    setShowChapterModal(false);
+                    setStartChapterId(chapter.id);
+                    setStartChapterTitle(chapter.title);
+                    setNewSessionName(`基于: ${chapter.title}`);
+                    setShowNewSessionModal(true);
+                }}
+            />
 
             {/* Config Modal */}
             {showConfigModal && (
