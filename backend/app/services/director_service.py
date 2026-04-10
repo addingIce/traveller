@@ -403,13 +403,20 @@ class ContextAssembler:
                 if len(last_intents) >= 3 and all(v is False for v in last_intents[-3:]):
                     context["pacing_needed"] = True
 
-                # 3. 获取相关实体
+                # 3. 获取相关实体（母体图谱 + 会话覆写双重检索）
+                # 逻辑：如果 session_id 中存在同名实体，优先使用 session_id 中的设定
                 query = """
-                MATCH (e:Entity {group_id: $novel_id})
-                RETURN e.name as name, e.summary as summary
-                LIMIT 10
+                MATCH (e:Entity)
+                WHERE e.group_id IN [$novel_id, $session_id]
+                WITH e.name as name, e
+                ORDER BY name, 
+                         (CASE WHEN e.group_id = $session_id THEN 2 ELSE 1 END) DESC, 
+                         e.priority DESC
+                WITH name, collect(e)[0] as best_e
+                RETURN best_e.name as name, best_e.summary as summary
+                LIMIT 15
                 """
-                result = await session.run(query, novel_id=novel_id)
+                result = await session.run(query, novel_id=novel_id, session_id=session_id)
                 entities = [f"{r['name']}: {r['summary']}" async for r in result]
                 context["relevant_entities"] = entities
 
