@@ -1,5 +1,6 @@
 
 import os
+import asyncio
 import json
 import re
 from typing import List, Dict, Any, Optional
@@ -250,9 +251,23 @@ class GraphImpactHandler:
                     result["error"] = f"Graphiti ingest failed: {resp.status_code}"
                     return result
             
-            # 2. 等待 Graphiti 处理（短暂延迟）
-            import asyncio
-            await asyncio.sleep(1.0)
+            # 2. 等待 Graphiti 处理（通过轮询 Episodic 节点确保数据已写入）
+            max_retries = 10
+            poll_interval = 0.5
+            ingest_success = False
+            
+            for _ in range(max_retries):
+                async with self.driver.session() as session:
+                    check_query = "MATCH (e:Episodic {uuid: $uuid}) RETURN e.uuid"
+                    chk_result = await session.run(check_query, uuid=message_uuid)
+                    if await chk_result.single():
+                        ingest_success = True
+                        break
+                await asyncio.sleep(poll_interval)
+            
+            if not ingest_success:
+                print(f"[WARNING] GraphImpactHandler: Ingest timeout for {message_uuid}, "
+                      "overrides may not be applied to new nodes.")
             
             # 3. 查询新创建的实体和边，标记为 override
             async with self.driver.session() as session:

@@ -352,6 +352,7 @@ async def deduplicate_entities_in_collection(
                         fact: COALESCE(r.fact, ''),
                         name: COALESCE(r.name, '')
                     }]->(t)
+                    SET nr += properties(r)
                     ON CREATE SET nr.uuid = COALESCE(r.uuid, randomUUID())
                     """,
                     dup_uuid=duplicate_uuid,
@@ -367,6 +368,7 @@ async def deduplicate_entities_in_collection(
                         fact: COALESCE(r.fact, ''),
                         name: COALESCE(r.name, '')
                     }]->(master)
+                    SET nr += properties(r)
                     ON CREATE SET nr.uuid = COALESCE(r.uuid, randomUUID())
                     """,
                     dup_uuid=duplicate_uuid,

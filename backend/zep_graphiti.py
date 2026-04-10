@@ -204,8 +204,8 @@ async def _hooked_execute(self, query_, *args, **kwargs):
 neo4j.AsyncDriver.execute_query = _hooked_execute
 
 
-_LLM_MAX_CONCURRENCY = 1
-_LLM_MIN_INTERVAL = 0.0
+_LLM_MAX_CONCURRENCY = int(os.getenv("GRAPHITI_LLM_MAX_CONCURRENCY", "1"))
+_LLM_MIN_INTERVAL = float(os.getenv("GRAPHITI_LLM_MIN_INTERVAL", "0.0"))
 _llm_semaphore = asyncio.Semaphore(_LLM_MAX_CONCURRENCY)
 _last_llm_call: float = 0.0 # GLOBAL
 
