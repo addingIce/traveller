@@ -14,8 +14,8 @@ Breaking the traditional unidirectional "author writes, reader reads" mode of no
 
 | Milestone | Status | Description |
 |--------|------|------|
-| M1: Data Infrastructure & Knowledge Extraction | ✅ Completed | Novel parsing, knowledge graph visualization |
-| M2: Creative Inference Engine | 🔄 Mostly Completed | Director AI, parallel universes, pacing control |
+| M1: Data Infrastructure & Knowledge Extraction | ✅ Completed | Includes entity deduplication and pruning optimization |
+| M2: Creative Inference Engine | ✅ Completed | Includes dual-track mode and safety protection |
 | M3: Interactive Play Client | ⏳ Pending | Character creation flow, immersive UI |
 | M4: DM Backend & Loop | ⏳ Pending | Dynamic graph overwriting, god's perspective |
 
@@ -168,7 +168,7 @@ neo4j:
 - Automatic knowledge graph extraction
 - Frontend archive display
 
-### M2: Creative Inference Engine 🔄
+### M2: Creative Inference Engine ✅
 - [x] Zep dynamic Session management
 - [x] Plot bookmarks and parallel universe branching
 - [x] Director AI dual-track mode
@@ -176,6 +176,7 @@ neo4j:
 - [x] Original plot timeline interaction
 - [x] Instruction injection defense layer
 - [x] Automatic triggers for graph changes
+- [x] Entity extraction and relationship deduplication optimization
 
 ### M3: Interactive Play Client ⏳
 - Character creation flow development

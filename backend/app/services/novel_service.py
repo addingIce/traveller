@@ -291,7 +291,7 @@ async def deduplicate_entities_in_collection(
             COALESCE(e.summary, '') AS summary,
             COALESCE(e.created_at, '') AS created_at,
             size([(e)-[:RELATES_TO]-() | 1]) + size([(e)-[:MENTIONS]-() | 1]) AS rel_score,
-            CASE WHEN e.attributes IS NULL THEN 0 ELSE size(keys(e.attributes)) END AS attr_score
+            CASE WHEN e.attributes IS NULL OR e.attributes = '' THEN 0 ELSE 1 END AS attr_score
         """
         result = await session.run(query, group_id=collection_name)
         entities = [record async for record in result]
@@ -403,6 +403,107 @@ async def deduplicate_entities_in_collection(
                 removed_nodes += 1
 
         return {"merged_groups": merged_groups, "removed_nodes": removed_nodes}
+
+async def prune_minor_entities(
+    collection_name: str,
+    neo4j_driver,
+    min_rel_score: int = 3
+) -> dict[str, int]:
+    """
+    剪枝：移除关系数量过少且没有摘要的实体
+    """
+    if not neo4j_driver:
+        return {"removed_entities": 0}
+
+    async with neo4j_driver.session() as session:
+        # 查询那些由 Zep 自动提取而非用户覆盖的实体
+        # 且关系总数（出度+入度）小于阈值，且 summary 为空的实体
+        prune_query = """
+        MATCH (e:Entity {group_id: $group_id})
+        WHERE (e.source IS NULL OR e.source <> 'override')
+          AND (e.summary IS NULL OR trim(e.summary) = '')
+        WITH e, size([(e)-[:RELATES_TO]-() | 1]) + size([(e)-[:MENTIONS]-() | 1]) AS total_rel
+        WHERE total_rel < $min_rel
+        DETACH DELETE e
+        RETURN count(e) as removed_count
+        """
+        result = await session.run(prune_query, group_id=collection_name, min_rel=min_rel_score)
+        record = await result.single()
+        removed_count = record["removed_count"] if record else 0
+        
+        if removed_count > 0:
+            print(f"[INFO] {collection_name}: Pruned {removed_count} minor entities (rel_score < {min_rel_score})")
+            
+        return {"removed_entities": removed_count}
+
+async def deduplicate_relationships(
+    collection_name: str,
+    neo4j_driver
+) -> dict[str, int]:
+    """
+    关系去重：合并相同两点之间语义重复的关系
+    目前采用简单策略：相同两点间若存在多个 RELATES_TO，合并其 fact
+    """
+    if not neo4j_driver:
+        return {"merged_rels": 0}
+
+    async with neo4j_driver.session() as session:
+        # 寻找相同起点和终点，且存在多个 RELATES_TO 关系的对
+        find_query = """
+        MATCH (s:Entity {group_id: $group_id})-[r:RELATES_TO]->(t:Entity {group_id: $group_id})
+        WITH s, t, collect(r) as rels
+        WHERE size(rels) > 1
+        RETURN s.uuid as s_uuid, t.uuid as t_uuid, rels
+        """
+        result = await session.run(find_query, group_id=collection_name)
+        
+        merged_count = 0
+        async for record in result:
+            rels = record["rels"]
+            s_uuid = record["s_uuid"]
+            t_uuid = record["t_uuid"]
+            
+            # 合并 facts：去重 + 排序
+            facts = []
+            seen_facts = set()
+            for r in rels:
+                f = (r.get("fact") or "").strip()
+                if f and f not in seen_facts:
+                    facts.append(f)
+                    seen_facts.add(f)
+            
+            if not facts:
+                continue
+            
+            # 简单去重逻辑：如果一个 fact 是另一个的子串，则只保留长的
+            # 注意：这在中文环境下效果较好，例如“是唐三的朋友”包含“朋友”
+            facts.sort(key=len, reverse=True)
+            final_facts = []
+            for f in facts:
+                if not any(f in other and f != other for other in final_facts):
+                    final_facts.append(f)
+            
+            combined_fact = " ".join(final_facts)
+            
+            # 更新 master 边，删除其他边
+            master_rel = rels[0]
+            for i in range(1, len(rels)):
+                await session.run(
+                    "MATCH ()-[r:RELATES_TO {uuid: $uuid}]->() DELETE r",
+                    uuid=rels[i]["uuid"]
+                )
+                merged_count += 1
+            
+            await session.run(
+                "MATCH ()-[r:RELATES_TO {uuid: $uuid}]->() SET r.fact = $fact",
+                uuid=master_rel["uuid"],
+                fact=combined_fact
+            )
+            
+        if merged_count > 0:
+            print(f"[INFO] {collection_name}: Merged {merged_count} redundant relationships")
+            
+        return {"merged_rels": merged_count}
 
 async def monitor_entity_extraction(
     collection_name: str,
@@ -550,14 +651,18 @@ async def monitor_entity_extraction(
                     # 实体稳定，执行去重并标记完成
                     status_store[collection_name]["stage"] = "dedup"
                     try:
+                        # 阶梯式清理：去重 -> 关系合并 -> 剪枝
                         dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                        await deduplicate_relationships(collection_name, neo4j_driver)
+                        await prune_minor_entities(collection_name, neo4j_driver)
+                        
                         if dedup_stats.get("removed_nodes", 0) > 0:
                             print(
                                 f"[INFO] {collection_name}: Deduplicated entities "
                                 f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
                             )
                     except Exception as dedup_error:
-                        print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
+                        print(f"[WARNING] {collection_name}: Post-processing failed: {dedup_error}")
 
                     status_store[collection_name]["status"] = "ready"
                     status_store[collection_name]["stage"] = "completed"
@@ -581,14 +686,18 @@ async def monitor_entity_extraction(
         if last_entity_count > 0:
             status_store[collection_name]["stage"] = "dedup"
             try:
+                # 阶梯式清理
                 dedup_stats = await deduplicate_entities_in_collection(collection_name, neo4j_driver)
+                await deduplicate_relationships(collection_name, neo4j_driver)
+                await prune_minor_entities(collection_name, neo4j_driver)
+                
                 if dedup_stats.get("removed_nodes", 0) > 0:
                     print(
                         f"[INFO] {collection_name}: Deduplicated entities "
                         f"(groups={dedup_stats['merged_groups']}, removed={dedup_stats['removed_nodes']})"
                     )
             except Exception as dedup_error:
-                print(f"[WARNING] {collection_name}: Deduplication failed: {dedup_error}")
+                print(f"[WARNING] {collection_name}: Post-processing failed: {dedup_error}")
 
             status_store[collection_name]["status"] = "ready"
             status_store[collection_name]["stage"] = "completed"

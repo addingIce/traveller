@@ -405,7 +405,16 @@ class ResilientOpenAIClient(OpenAIClient):
 - When in doubt about an entity's importance, DO NOT extract it
 - Quality over quantity: 5 important entities are better than 20 minor ones"""
 
-                            combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule + strict_entity_rule
+                            # 严格关系提取规则：只提取推动剧情的关键关系
+                            strict_relationship_rule = """
+\n\nSTRICT RELATIONSHIP EXTRACTION RULES:
+- ONLY extract relationships that are significant to the plot or character development.
+- DO NOT extract trivial or obvious relationships (e.g., "A stood next to B", "A saw B").
+- AVOID redundant relationships. If a relationship is already implied or stated, do not extract it again.
+- Preferred relations: Family (father/son), Sect/Organization (disciple/master), Emotions (love/hate), Plot-driven (enemies/allies).
+- BE CONCISE in fact descriptions. Use "A is B's teacher" instead of "A spent many years teaching B the way of the sword"."""
+
+                            combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule + strict_entity_rule + strict_relationship_rule
                             
                             if hasattr(last_msg_obj, 'content'):
                                 last_msg_obj.content = last_msg + combined_rules
