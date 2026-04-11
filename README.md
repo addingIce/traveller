@@ -120,6 +120,12 @@ bash scripts/manage.sh stop
 bash scripts/manage.sh restart
 ```
 
+### 数据持久化注意事项
+
+- `backend/docker-compose.yml` 已为 `Neo4j` 与 `PostgreSQL` 配置 named volumes（`neo4j_data`、`neo4j_logs`、`pg_data`）。
+- 建议使用 `docker-compose down && docker-compose up -d` 重启以重新加载 `.env`，不要附加 `-v`，否则会删除 volumes 并导致小说/会话数据丢失。
+- 如需完全重置环境，请先确认是否需要备份，再执行带 `-v` 的删除命令。
+
 ## 项目结构
 
 ```

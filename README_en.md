@@ -120,6 +120,12 @@ bash scripts/manage.sh stop
 bash scripts/manage.sh restart
 ```
 
+### Data Persistence Notes
+
+- `backend/docker-compose.yml` now defines named volumes for `Neo4j` and `PostgreSQL` (`neo4j_data`, `neo4j_logs`, `pg_data`).
+- Use `docker-compose down && docker-compose up -d` to reload `.env`, and do not add `-v`, otherwise volumes will be removed and novel/session data will be lost.
+- If you need a full reset, confirm backups first before running removal commands with `-v`.
+
 ## Project Structure
 
 ```
