@@ -13,7 +13,7 @@ import {
   Info,
   AlertCircle,
 } from 'lucide-react';
-import { SystemConfig } from '../../api';
+import { SystemConfig, testLLMConnectivity, LLMConnectivityTestRequest } from '../../api';
 
 interface ConfigModalProps {
   visible: boolean;
@@ -26,6 +26,13 @@ interface ConfigModalProps {
   onReset: () => Promise<void>;
   onRestart: () => Promise<void>;
   onShowHelp: () => void;
+}
+
+type ConnectivityStatus = 'idle' | 'testing' | 'success' | 'error';
+
+interface ConnectivityUIResult {
+  status: ConnectivityStatus;
+  message: string;
 }
 
 export const ConfigModal: React.FC<ConfigModalProps> = ({
@@ -43,11 +50,67 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
   const [config, setConfig] = useState<SystemConfig | null>(initialConfig);
   const [selectedPreset, setSelectedPreset] = useState<string>('');
   const [activeSection, setActiveSection] = useState<string>('presets');
+  const [isTesting, setIsTesting] = useState<boolean>(false);
+  const [testResult, setTestResult] = useState<{ llm: ConnectivityUIResult; embedding: ConnectivityUIResult }>({
+    llm: { status: 'idle', message: '' },
+    embedding: { status: 'idle', message: '' },
+  });
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setConfig(initialConfig);
+    setTestResult({
+      llm: { status: 'idle', message: '' },
+      embedding: { status: 'idle', message: '' },
+    });
   }, [initialConfig]);
+
+  const resetTestResult = (target: 'llm' | 'embedding') => {
+    setTestResult((prev) => ({
+      ...prev,
+      [target]: { status: 'idle', message: '' },
+    }));
+  };
+
+  const handleTestConnectivity = async () => {
+    if (!config || isTesting) return;
+    const payload: LLMConnectivityTestRequest = {
+      llm_api_key: config.api.llm_api_key,
+      llm_base_url: config.api.llm_base_url,
+      llm_model: config.api.model_director,
+      embedding_api_key: config.api.embedding_api_key,
+      embedding_base_url: config.api.embedding_base_url,
+      embedding_model: config.api.embedding_model,
+    };
+
+    setIsTesting(true);
+    setTestResult({
+      llm: { status: 'testing', message: '测试中...' },
+      embedding: { status: 'testing', message: '测试中...' },
+    });
+
+    try {
+      const result = await testLLMConnectivity(payload);
+      setTestResult({
+        llm: {
+          status: result.llm.ok ? 'success' : 'error',
+          message: result.llm.message || (result.llm.ok ? 'LLM 可用' : 'LLM 不可用'),
+        },
+        embedding: {
+          status: result.embedding.ok ? 'success' : 'error',
+          message: result.embedding.message || (result.embedding.ok ? 'Embedding 可用' : 'Embedding 不可用'),
+        },
+      });
+    } catch (error) {
+      console.error("测试 LLM 接口失败", error);
+      setTestResult({
+        llm: { status: 'error', message: '测试请求失败，请检查后端服务' },
+        embedding: { status: 'error', message: '测试请求失败，请检查后端服务' },
+      });
+    } finally {
+      setIsTesting(false);
+    }
+  };
 
   const scrollToSection = (sectionId: string) => {
     setActiveSection(sectionId);
@@ -490,10 +553,29 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
 
                 {/* API Config */}
                 <div id="api" className="bg-slate-800/50 border border-white/10 rounded-2xl p-6 scroll-mt-4">
-                  <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                    <Network className="w-5 h-5 text-cyan-400" />
-                    API 配置
-                  </h3>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-semibold text-white flex items-center gap-2">
+                      <Network className="w-5 h-5 text-cyan-400" />
+                      API 配置
+                    </h3>
+                    <button
+                      onClick={handleTestConnectivity}
+                      disabled={isTesting}
+                      className="px-4 py-2 rounded-lg bg-cyan-500 hover:bg-cyan-600 text-white text-sm transition-all flex items-center gap-2 disabled:opacity-50"
+                    >
+                      {isTesting ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          测试中...
+                        </>
+                      ) : (
+                        <>
+                          <Network className="w-4 h-4" />
+                          测试接口
+                        </>
+                      )}
+                    </button>
+                  </div>
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-6">
                       <div className="space-y-2">
@@ -501,13 +583,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         <input
                           type="password"
                           value={config.api.llm_api_key}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            api: {
-                              ...config.api,
-                              llm_api_key: e.target.value
-                            }
-                          })}
+                          onChange={(e) => {
+                            setConfig({
+                              ...config,
+                              api: {
+                                ...config.api,
+                                llm_api_key: e.target.value
+                              }
+                            });
+                            resetTestResult('llm');
+                          }}
                           className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                           placeholder="sk-..."
                         />
@@ -517,16 +602,57 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         <input
                           type="text"
                           value={config.api.llm_base_url}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            api: {
-                              ...config.api,
-                              llm_base_url: e.target.value
-                            }
-                          })}
+                          onChange={(e) => {
+                            setConfig({
+                              ...config,
+                              api: {
+                                ...config.api,
+                                llm_base_url: e.target.value
+                              }
+                            });
+                            resetTestResult('llm');
+                          }}
                           className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                           placeholder="https://api.openai.com/v1"
                         />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className={`rounded-xl border px-4 py-3 ${testResult.llm.status === 'success' ? 'bg-emerald-500/10 border-emerald-500/30' : testResult.llm.status === 'error' ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/10'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          {testResult.llm.status === 'success' ? (
+                            <CheckCircle className="w-4 h-4 text-emerald-400" />
+                          ) : testResult.llm.status === 'error' ? (
+                            <AlertCircle className="w-4 h-4 text-red-400" />
+                          ) : testResult.llm.status === 'testing' ? (
+                            <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+                          ) : (
+                            <Info className="w-4 h-4 text-slate-400" />
+                          )}
+                          <span className="text-sm font-medium text-white">LLM 接口</span>
+                        </div>
+                        <p className="text-xs text-slate-300">
+                          {testResult.llm.status === 'idle' ? '未测试' : testResult.llm.message}
+                        </p>
+                      </div>
+
+                      <div className={`rounded-xl border px-4 py-3 ${testResult.embedding.status === 'success' ? 'bg-emerald-500/10 border-emerald-500/30' : testResult.embedding.status === 'error' ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/10'}`}>
+                        <div className="flex items-center gap-2 mb-1">
+                          {testResult.embedding.status === 'success' ? (
+                            <CheckCircle className="w-4 h-4 text-emerald-400" />
+                          ) : testResult.embedding.status === 'error' ? (
+                            <AlertCircle className="w-4 h-4 text-red-400" />
+                          ) : testResult.embedding.status === 'testing' ? (
+                            <Loader2 className="w-4 h-4 text-cyan-400 animate-spin" />
+                          ) : (
+                            <Info className="w-4 h-4 text-slate-400" />
+                          )}
+                          <span className="text-sm font-medium text-white">Embedding 接口</span>
+                        </div>
+                        <p className="text-xs text-slate-300">
+                          {testResult.embedding.status === 'idle' ? '未测试' : testResult.embedding.message}
+                        </p>
                       </div>
                     </div>
                     <div className="grid grid-cols-2 gap-6">
@@ -535,13 +661,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         <input
                           type="password"
                           value={config.api.embedding_api_key}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            api: {
-                              ...config.api,
-                              embedding_api_key: e.target.value
-                            }
-                          })}
+                          onChange={(e) => {
+                            setConfig({
+                              ...config,
+                              api: {
+                                ...config.api,
+                                embedding_api_key: e.target.value
+                              }
+                            });
+                            resetTestResult('embedding');
+                          }}
                           className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                           placeholder="sk-..."
                         />
@@ -551,13 +680,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         <input
                           type="text"
                           value={config.api.embedding_base_url}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            api: {
-                              ...config.api,
-                              embedding_base_url: e.target.value
-                            }
-                          })}
+                          onChange={(e) => {
+                            setConfig({
+                              ...config,
+                              api: {
+                                ...config.api,
+                                embedding_base_url: e.target.value
+                              }
+                            });
+                            resetTestResult('embedding');
+                          }}
                           className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                           placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
                         />
@@ -567,13 +699,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                         <input
                           type="text"
                           value={config.api.embedding_model}
-                          onChange={(e) => setConfig({
-                            ...config,
-                            api: {
-                              ...config.api,
-                              embedding_model: e.target.value
-                            }
-                          })}
+                          onChange={(e) => {
+                            setConfig({
+                              ...config,
+                              api: {
+                                ...config.api,
+                                embedding_model: e.target.value
+                              }
+                            });
+                            resetTestResult('embedding');
+                          }}
                           className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                           placeholder="text-embedding-v4"
                         />
@@ -592,13 +727,16 @@ export const ConfigModal: React.FC<ConfigModalProps> = ({
                           <input
                             type="text"
                             value={config.api.model_director}
-                            onChange={(e) => setConfig({
-                              ...config,
-                              api: {
-                                ...config.api,
-                                model_director: e.target.value
-                              }
-                            })}
+                            onChange={(e) => {
+                              setConfig({
+                                ...config,
+                                api: {
+                                  ...config.api,
+                                  model_director: e.target.value
+                                }
+                              });
+                              resetTestResult('llm');
+                            }}
                             className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-2.5 text-white focus:outline-none focus:border-emerald-500 transition-all"
                             placeholder="gpt-4o"
                           />

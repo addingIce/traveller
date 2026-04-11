@@ -204,6 +204,28 @@ export interface SystemConfig {
     api: APIConfig;
 }
 
+export interface LLMConnectivityTestRequest {
+    llm_api_key: string;
+    llm_base_url: string;
+    llm_model: string;
+    embedding_api_key: string;
+    embedding_base_url: string;
+    embedding_model: string;
+}
+
+export interface ConnectivityProbeResult {
+    ok: boolean;
+    status_code?: number;
+    message: string;
+    latency_ms?: number;
+}
+
+export interface LLMConnectivityTestResponse {
+    llm: ConnectivityProbeResult;
+    embedding: ConnectivityProbeResult;
+    overall_ok: boolean;
+}
+
 export const getConfig = async (): Promise<SystemConfig> => {
     const { data } = await apiClient.get('/config');
     return data;
@@ -236,6 +258,11 @@ export const restartServices = async (): Promise<{ success: boolean; message: st
 
 export const getServicesStatus = async (): Promise<{ success: boolean; status: string }> => {
     const { data } = await apiClient.get('/config/services/status');
+    return data;
+};
+
+export const testLLMConnectivity = async (payload: LLMConnectivityTestRequest): Promise<LLMConnectivityTestResponse> => {
+    const { data } = await apiClient.post('/config/test-llm', payload);
     return data;
 };
 

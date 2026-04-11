@@ -3,6 +3,8 @@ from pydantic import BaseModel
 from typing import Optional
 import os
 import yaml
+import time
+import httpx
 from pathlib import Path
 
 router = APIRouter()
@@ -49,8 +51,69 @@ class SystemConfig(BaseModel):
     business: BusinessConfig = BusinessConfig()
     api: APIConfig = APIConfig()
 
+class LLMConnectivityTestRequest(BaseModel):
+    """LLM/Embedding 接口可用性测试请求"""
+    llm_api_key: str = ""
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_model: str = "gpt-4o"
+    embedding_api_key: str = ""
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    embedding_model: str = "text-embedding-v4"
+
+class ConnectivityProbeResult(BaseModel):
+    ok: bool
+    status_code: Optional[int] = None
+    message: str
+    latency_ms: Optional[int] = None
+
+class LLMConnectivityTestResponse(BaseModel):
+    llm: ConnectivityProbeResult
+    embedding: ConnectivityProbeResult
+    overall_ok: bool
+
 # 内存中的配置（运行时配置）
 runtime_config = SystemConfig()
+
+def _normalize_base_url(base_url: str) -> str:
+    return (base_url or "").strip().rstrip("/")
+
+async def _probe_models_endpoint(base_url: str, api_key: str, label: str, timeout_sec: float = 10.0) -> ConnectivityProbeResult:
+    """通过 /models 轻量探测接口可用性"""
+    normalized_url = _normalize_base_url(base_url)
+    if not normalized_url:
+        return ConnectivityProbeResult(ok=False, message=f"{label} Base URL 不能为空")
+    if not api_key:
+        return ConnectivityProbeResult(ok=False, message=f"{label} API Key 不能为空")
+
+    test_url = f"{normalized_url}/models"
+    headers = {"Authorization": f"Bearer {api_key}"}
+    start = time.perf_counter()
+    try:
+        async with httpx.AsyncClient(timeout=timeout_sec, follow_redirects=True) as client:
+            response = await client.get(test_url, headers=headers)
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        if 200 <= response.status_code < 300:
+            print(f"[INFO] {label} connectivity test passed: url={normalized_url}, status={response.status_code}, latency_ms={latency_ms}")
+            return ConnectivityProbeResult(
+                ok=True,
+                status_code=response.status_code,
+                latency_ms=latency_ms,
+                message=f"{label} 接口可用"
+            )
+
+        print(f"[WARNING] {label} connectivity test failed: url={normalized_url}, status={response.status_code}, latency_ms={latency_ms}")
+        return ConnectivityProbeResult(
+            ok=False,
+            status_code=response.status_code,
+            latency_ms=latency_ms,
+            message=f"{label} 接口返回异常状态码 {response.status_code}"
+        )
+    except httpx.TimeoutException:
+        print(f"[WARNING] {label} connectivity test timeout: url={normalized_url}")
+        return ConnectivityProbeResult(ok=False, message=f"{label} 接口请求超时（{int(timeout_sec)}s）")
+    except Exception as e:
+        print(f"[WARNING] {label} connectivity test error: url={normalized_url}, error={type(e).__name__}")
+        return ConnectivityProbeResult(ok=False, message=f"{label} 接口连接失败：{type(e).__name__}")
 
 def load_config_from_file() -> SystemConfig:
     """从配置文件加载配置"""
@@ -218,6 +281,25 @@ async def update_config(config: SystemConfig):
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/config/test-llm", response_model=LLMConnectivityTestResponse)
+async def test_llm_connectivity(payload: LLMConnectivityTestRequest):
+    """测试 LLM 与 Embedding 接口可用性（不落盘）"""
+    llm_result = await _probe_models_endpoint(
+        base_url=payload.llm_base_url,
+        api_key=payload.llm_api_key,
+        label="LLM",
+    )
+    embedding_result = await _probe_models_endpoint(
+        base_url=payload.embedding_base_url,
+        api_key=payload.embedding_api_key,
+        label="Embedding",
+    )
+    return LLMConnectivityTestResponse(
+        llm=llm_result,
+        embedding=embedding_result,
+        overall_ok=llm_result.ok and embedding_result.ok,
+    )
 
 @router.post("/config/reload")
 async def reload_config():
