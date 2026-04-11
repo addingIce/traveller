@@ -469,7 +469,8 @@ class SessionService:
                 if not content:
                     continue
                 
-                msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                raw_msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                msg_id = str(raw_msg_id)
                 lines = content.split('\n')
                 
                 # Scan all lines to find chapter titles
@@ -521,11 +522,14 @@ class SessionService:
             # If no chapters found via regex, we might just return the first few chunks as "segments"
             if not chapters and messages:
                 for i, msg in enumerate(messages[:10]): # Limit to first 10 for preview
-                    msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                    raw_msg_id = getattr(msg, 'uuid_', None) or getattr(msg, 'uuid', None) or f"msg-{i}"
+                    msg_id = str(raw_msg_id)
+                    full_content = msg.content or ""
                     chapters.append({
                         "id": msg_id,
                         "title": f"片段 {i+1}",
-                        "content_preview": msg.content[:200] + "...",
+                        "content": full_content,  # 兜底分支也返回完整内容，避免点击后只有预览
+                        "content_preview": full_content[:200] + ("..." if len(full_content) > 200 else ""),
                         "order": i + 1
                     })
 
@@ -548,7 +552,7 @@ class SessionService:
                         if not content:
                             continue
                         chapters.append({
-                            "id": record.get("uuid") or f"episodic-{i+1}",
+                            "id": str(record.get("uuid") or f"episodic-{i+1}"),
                             "title": f"片段 {i+1}",
                             "content": content,  # 完整内容
                             "content_preview": content[:200] + ("..." if len(content) > 200 else ""),
