@@ -295,6 +295,41 @@ async def get_novels_list(request: Request):
                         stage=task_info.get("stage"),
                         eta_seconds=task_info.get("eta_seconds")
                     ))
+
+                # 获取仅有 Episodic 数据的孤儿小说（没有 Novel 和 Entity 时也要可见，便于用户停止任务）
+                episodic_only_query = """
+                MATCH (ep:Episodic)
+                WHERE ep.group_id STARTS WITH 'novel_'
+                WITH ep.group_id as group_id, COUNT(ep) as episodic_count
+                OPTIONAL MATCH (n:Novel {collection_name: group_id})
+                OPTIONAL MATCH (e:Entity {group_id: group_id})
+                WITH group_id, episodic_count, n, COUNT(DISTINCT e) as entity_count
+                WHERE n IS NULL AND entity_count = 0
+                RETURN group_id, episodic_count
+                ORDER BY group_id
+                """
+                result = await session.run(episodic_only_query)
+                async for record in result:
+                    collection_name = record["group_id"]
+                    episodic_count = int(record["episodic_count"] or 0)
+
+                    task_info = status_store.get(collection_name, {})
+                    inferred_status = task_info.get("status", "extracting")
+                    progress = task_info.get("progress", 0.0)
+                    if progress <= 0 and episodic_count > 0:
+                        # 无 total_chunks 时，至少体现“已写入并在提取中”
+                        progress = 33.3
+
+                    novels.append(NovelInfo(
+                        collection_name=collection_name,
+                        title=task_info.get("title", collection_name),
+                        status=inferred_status,
+                        created_at=task_info.get("created_at", ""),
+                        chunks_count=episodic_count,
+                        progress=progress,
+                        stage=task_info.get("stage", "extracting"),
+                        eta_seconds=task_info.get("eta_seconds")
+                    ))
         except Exception as e:
             print(f"[ERROR] Failed to get novels from Neo4j: {e}")
     
@@ -437,14 +472,18 @@ async def delete_novel(collection_name: str, request: Request):
                 print(f"[WARNING] 获取 Session 列表失败: {e}")
 
         # 2. 删除 Zep 中的所有 session 数据（包括原始小说和分支）
-        if client and session_ids:
-            for sid in session_ids:
+        # 若 Novel/Session 关系缺失，兜底按 collection_name 删除，避免“前端看不到但后台仍在跑”
+        zep_sessions_to_delete = list(dict.fromkeys(session_ids + [collection_name]))
+        if client and zep_sessions_to_delete:
+            deleted_session_count = 0
+            for sid in zep_sessions_to_delete:
                 try:
                     await client.memory.delete_memory(sid)
                     print(f"[INFO] Zep session {sid} 已删除")
+                    deleted_session_count += 1
                 except Exception as e:
                     print(f"[WARNING] 删除 Zep session {sid} 失败: {e}")
-            deleted_sessions = len(session_ids)
+            deleted_sessions = deleted_session_count
         
         # 3. 删除 Neo4j 中的实体和关系
         if driver:
@@ -457,7 +496,7 @@ async def delete_novel(collection_name: str, request: Request):
                     """
                     await driver_session.run(session_query, collection_name=collection_name)
 
-                    group_ids = session_ids if session_ids else [collection_name]
+                    group_ids = list(dict.fromkeys(session_ids + [collection_name]))
                     # 第一步：删除所有 Entity 节点的关系（包括 outgoing 和 incoming）
                     edge_query = """
                     MATCH (n:Entity)

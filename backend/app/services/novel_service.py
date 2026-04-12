@@ -529,8 +529,10 @@ async def monitor_entity_extraction(
                 )
                 record = await result.single()
                 return record is not None
-        except Exception:
-            return False
+        except Exception as e:
+            # Neo4j 短暂连接抖动时，不要误判为“小说被删除”
+            print(f"[WARNING] {collection_name}: check_novel_exists failed, treat as existing: {e}")
+            return True
     
     async def get_episodic_count() -> int:
         """获取已创建的 Episodic 节点数"""
@@ -821,36 +823,46 @@ async def process_novel_task(
         status_store[collection_name]["stage"] = "chunking"
         
         if neo4j_driver:
-            try:
-                async with neo4j_driver.session() as session:
-                    create_novel_query = """
-                    MERGE (n:Novel {collection_name: $collection_name})
-                    ON CREATE SET 
-                        n.title = $title,
-                        n.created_at = $created_at,
-                        n.status = 'processing'
-                    ON MATCH SET 
-                        n.status = 'processing'
-                    WITH n
-                    MERGE (s:Session {uuid: $collection_name})
-                    ON CREATE SET
-                        s.name = '原始剧情线',
-                        s.user_id = 'system',
-                        s.created_at = $created_at,
-                        s.last_interaction_at = $created_at,
-                        s.is_root = true
-                    MERGE (n)-[:HAS_SESSION]->(s)
-                    RETURN n
-                    """
-                    await session.run(
-                        create_novel_query,
-                        collection_name=collection_name,
-                        title=novel_title,
-                        created_at=status_store[collection_name]["created_at"]
-                    )
-                    print(f"[INFO] Created/Updated Novel and root Session node: {collection_name}")
-            except Exception as e:
-                print(f"[ERROR] Failed to create Novel node: {e}")
+            create_novel_query = """
+            MERGE (n:Novel {collection_name: $collection_name})
+            ON CREATE SET 
+                n.title = $title,
+                n.created_at = $created_at,
+                n.status = 'processing'
+            ON MATCH SET 
+                n.status = 'processing'
+            WITH n
+            MERGE (s:Session {uuid: $collection_name})
+            ON CREATE SET
+                s.name = '原始剧情线',
+                s.user_id = 'system',
+                s.created_at = $created_at,
+                s.last_interaction_at = $created_at,
+                s.is_root = true
+            MERGE (n)-[:HAS_SESSION]->(s)
+            RETURN n.collection_name as collection_name
+            """
+            novel_ready = False
+            for attempt in range(1, 4):
+                try:
+                    async with neo4j_driver.session() as session:
+                        result = await session.run(
+                            create_novel_query,
+                            collection_name=collection_name,
+                            title=novel_title,
+                            created_at=status_store[collection_name]["created_at"]
+                        )
+                        record = await result.single()
+                        if record and record.get("collection_name") == collection_name:
+                            novel_ready = True
+                            print(f"[INFO] Created/Updated Novel and root Session node: {collection_name}")
+                            break
+                except Exception as e:
+                    print(f"[WARNING] Failed to create Novel node ({attempt}/3): {e}")
+                if attempt < 3:
+                    await asyncio.sleep(2 ** (attempt - 1))
+            if not novel_ready:
+                raise RuntimeError("Neo4j Novel 节点初始化失败，请检查 Neo4j 连接状态")
         
         chunks = smart_chunk_content(
             content, 
@@ -964,17 +976,35 @@ async def process_novel_task(
         status_store[collection_name]["progress"] = 0.0  # 实体提取进度从 0 开始
         
         if neo4j_driver:
-            try:
-                async with neo4j_driver.session() as session:
-                    update_novel_query = """
-                    MATCH (n:Novel {collection_name: $collection_name})
-                    SET n.status = 'extracting'
-                    RETURN n
-                    """
-                    await session.run(update_novel_query, collection_name=collection_name)
-                    print(f"[INFO] Updated Novel node status to 'extracting': {collection_name}")
-            except Exception as e:
-                print(f"[ERROR] Failed to update Novel node status: {e}")
+            update_novel_query = """
+            MERGE (n:Novel {collection_name: $collection_name})
+            ON CREATE SET
+                n.title = $title,
+                n.created_at = $created_at
+            SET n.status = 'extracting'
+            RETURN n.collection_name as collection_name
+            """
+            updated = False
+            for attempt in range(1, 4):
+                try:
+                    async with neo4j_driver.session() as session:
+                        result = await session.run(
+                            update_novel_query,
+                            collection_name=collection_name,
+                            title=novel_title,
+                            created_at=status_store[collection_name]["created_at"]
+                        )
+                        record = await result.single()
+                        if record and record.get("collection_name") == collection_name:
+                            updated = True
+                            print(f"[INFO] Updated Novel node status to 'extracting': {collection_name}")
+                            break
+                except Exception as e:
+                    print(f"[WARNING] Failed to update Novel node status ({attempt}/3): {e}")
+                if attempt < 3:
+                    await asyncio.sleep(2 ** (attempt - 1))
+            if not updated:
+                raise RuntimeError("无法更新 Novel 状态到 extracting（Neo4j 连接异常）")
         
         # 启动监控任务并保存引用
         monitor_task = asyncio.create_task(monitor_entity_extraction(collection_name, neo4j_driver, status_store))
