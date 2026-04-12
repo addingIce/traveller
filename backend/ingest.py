@@ -15,6 +15,40 @@ from graph_service.zep_graphiti import ZepGraphitiDep
 # 存储已取消的 group_id（小说集合）
 cancelled_groups: set[str] = set()
 
+# 这些 role/role_type 属于系统消息元信息，不应进入实体抽取正文。
+GENERIC_ROLES = {
+    "user",
+    "assistant",
+    "system",
+    "narrator",
+    "speaker",
+    "讲述者",
+}
+
+
+def _format_episode_body(m: Message) -> str:
+    role = (m.role or "").strip()
+    role_type = (m.role_type or "").strip()
+    content = (m.content or "").strip()
+    if not content:
+        return ""
+
+    role_l = role.lower()
+    role_type_l = role_type.lower()
+
+    # 对系统/通用角色，直接使用正文，避免抽出 assistant/user 伪实体。
+    if role_l in GENERIC_ROLES or role_type_l in GENERIC_ROLES:
+        return content
+
+    # 其他自定义角色（例如明确的人物名）才保留前缀。
+    if role:
+        if role_type:
+            return f"{role}({role_type}): {content}"
+        return f"{role}: {content}"
+    if role_type:
+        return f"{role_type}: {content}"
+    return content
+
 
 class AsyncWorker:
     def __init__(self):
@@ -122,11 +156,12 @@ async def add_messages(
                     print(f"Node {m.uuid} already exists.")
                 except NodeNotFoundError:
                     print(f"Node {m.uuid} not found, creating it first...")
+                    episode_body = _format_episode_body(m)
                     new_ep = EpisodicNode(
                         uuid=m.uuid,
                         name=m.name or f"Message {m.uuid[:8]}",
                         group_id=group_id,
-                        content=f'{m.role or ""}({m.role_type}): {m.content}',
+                        content=episode_body,
                         created_at=utc_now(),
                         valid_at=m.timestamp or utc_now(),
                         source=EpisodeType.message,
@@ -141,8 +176,8 @@ async def add_messages(
                     return
 
                 print(f"Adding episode to graphiti: {m.uuid}")
-                # 格式化 episode_body：role 为空时直接使用 content，避免 "user" 被识别为实体
-                episode_body = f'{m.role}({m.role_type}): {m.content}' if m.role else m.content
+                # 统一清洗系统角色前缀，避免 assistant/user 被识别为实体
+                episode_body = _format_episode_body(m)
                 await graphiti.add_episode(
                     uuid=m.uuid,
                     group_id=group_id,
