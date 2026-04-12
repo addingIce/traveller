@@ -587,6 +587,8 @@ async def monitor_entity_extraction(
     print(f"[INFO] {collection_name}: Monitoring started, expecting {total_chunks} chunks")
     
     try:
+        episodic_count = 0
+        entity_count = 0
         for i in range(max_check_count):
             await asyncio.sleep(check_interval)
             time_elapsed = (i + 1) * check_interval
@@ -607,10 +609,14 @@ async def monitor_entity_extraction(
             
             # 更新 status_store 中的进度
             if total_chunks > 0:
-                status_store[collection_name]["chunks_processed"] = min(episodic_count, total_chunks)
-                # 计算实体提取进度百分比
-                progress = (episodic_count / total_chunks) * 100
-                status_store[collection_name]["progress"] = round(progress, 1)
+                if all_episodics_created:
+                    status_store[collection_name]["chunks_processed"] = total_chunks
+                    status_store[collection_name]["progress"] = 100.0
+                else:
+                    status_store[collection_name]["chunks_processed"] = min(episodic_count, total_chunks)
+                    # 计算实体提取进度百分比
+                    progress = (episodic_count / total_chunks) * 100
+                    status_store[collection_name]["progress"] = round(progress, 1)
             
             # 阶段 1：等待所有 Episodic 节点创建完成
             if not all_episodics_created:
@@ -619,6 +625,28 @@ async def monitor_entity_extraction(
                     status_store[collection_name]["progress"] = 100.0  # 所有 Episodic 已创建
                     print(f"[INFO] {collection_name}: All {episodic_count} Episodic nodes created, watching entity stability")
                 elif time_elapsed > 300:  # 5 分钟后假设已完成
+                    # 仍未达到预期 chunks，判定为失败，避免长期卡在 extracting
+                    if total_chunks > 0 and episodic_count < total_chunks:
+                        print(
+                            f"[WARNING] {collection_name}: Timeout waiting for Episodics "
+                            f"({episodic_count}/{total_chunks}), mark failed"
+                        )
+                        status_store[collection_name]["status"] = "failed"
+                        status_store[collection_name]["stage"] = "extracting"
+                        status_store[collection_name]["progress"] = round((episodic_count / total_chunks) * 100, 1)
+                        status_store[collection_name]["chunks_processed"] = episodic_count
+                        status_store[collection_name]["error_message"] = (
+                            f"分块处理超时：{episodic_count}/{total_chunks}，请检查 Graphiti/Zep 链路"
+                        )
+                        try:
+                            async with neo4j_driver.session() as session:
+                                await session.run(
+                                    "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'failed'",
+                                    cn=collection_name
+                                )
+                        except Exception as e:
+                            print(f"[ERROR] Failed to update Novel node status: {e}")
+                        return
                     all_episodics_created = True
                     status_store[collection_name]["progress"] = 100.0
                     print(f"[INFO] {collection_name}: Timeout waiting for Episodics ({episodic_count}/{total_chunks}), proceeding with entity check")
@@ -685,6 +713,28 @@ async def monitor_entity_extraction(
             last_entity_count = entity_count
         
         # 超时处理
+        if total_chunks > 0 and episodic_count < total_chunks:
+            print(
+                f"[WARNING] {collection_name}: Monitoring timeout with incomplete chunks "
+                f"({episodic_count}/{total_chunks}), mark failed"
+            )
+            status_store[collection_name]["status"] = "failed"
+            status_store[collection_name]["stage"] = "extracting"
+            status_store[collection_name]["progress"] = round((episodic_count / total_chunks) * 100, 1)
+            status_store[collection_name]["chunks_processed"] = episodic_count
+            status_store[collection_name]["error_message"] = (
+                f"分块处理超时：{episodic_count}/{total_chunks}，请检查 Graphiti/Zep 链路"
+            )
+            try:
+                async with neo4j_driver.session() as session:
+                    await session.run(
+                        "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'failed'",
+                        cn=collection_name
+                    )
+            except Exception as e:
+                print(f"[ERROR] Failed to update Novel node status: {e}")
+            return
+
         if last_entity_count > 0:
             status_store[collection_name]["stage"] = "dedup"
             try:
@@ -713,7 +763,38 @@ async def monitor_entity_extraction(
             except Exception as e:
                 print(f"[ERROR] Failed to update Novel node status: {e}")
         else:
-            print(f"[WARNING] {collection_name}: No entities extracted after monitoring")
+            # 没有实体时，也需要收敛到终态，避免前端长时间卡在 extracting
+            if episodic_count > 0:
+                print(
+                    f"[WARNING] {collection_name}: Episodics exist but no entities after monitoring "
+                    f"(episodics={episodic_count}), mark failed"
+                )
+                status_store[collection_name]["status"] = "failed"
+                status_store[collection_name]["stage"] = "extracting"
+                status_store[collection_name]["progress"] = 100.0
+                status_store[collection_name]["chunks_processed"] = total_chunks or episodic_count
+                status_store[collection_name]["error_message"] = "分块完成但实体提取失败，请检查 Graphiti/LLM 链路"
+                try:
+                    async with neo4j_driver.session() as session:
+                        await session.run(
+                            "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'failed'",
+                            cn=collection_name
+                        )
+                except Exception as e:
+                    print(f"[ERROR] Failed to update Novel node status: {e}")
+            else:
+                print(f"[WARNING] {collection_name}: No episodics/entities extracted after monitoring, mark failed")
+                status_store[collection_name]["status"] = "failed"
+                status_store[collection_name]["stage"] = "extracting"
+                status_store[collection_name]["error_message"] = "实体提取超时且未生成可用数据"
+                try:
+                    async with neo4j_driver.session() as session:
+                        await session.run(
+                            "MATCH (n:Novel {collection_name: $cn}) SET n.status = 'failed'",
+                            cn=collection_name
+                        )
+                except Exception as e:
+                    print(f"[ERROR] Failed to update Novel node status: {e}")
     
     except asyncio.CancelledError:
         print(f"[INFO] {collection_name}: Monitoring task cancelled")
@@ -925,19 +1006,34 @@ async def check_zep_messages(collection_name: str) -> int:
         zep_api_url = os.getenv("ZEP_API_URL", "http://localhost:8000")
         zep_api_key = os.getenv("ZEP_API_KEY", "this_is_a_secret_key_for_zep_ce_1234567890")
         async with httpx.AsyncClient(timeout=30.0) as http_client:
-            response = await http_client.get(
+            headers = {"Authorization": f"Bearer {zep_api_key}"}
+            # 优先使用 v2 memory 接口；若不兼容，再回退到 v1 sessions/messages。
+            probe_urls = [
+                f"{zep_api_url}/api/v2/sessions/{collection_name}/memory",
+                f"{zep_api_url}/api/v1/sessions/{collection_name}/messages",
                 f"{zep_api_url}/api/v1/session/{collection_name}/messages",
-                params={"limit": 1},
-                headers={"Authorization": f"Bearer {zep_api_key}"}
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return len(data.get("messages", []))
-            elif response.status_code == 404:
-                return 0
-            else:
-                print(f"[WARNING] Failed to check Zep messages: {response.status_code}")
-                return 0
+            ]
+            for idx, url in enumerate(probe_urls):
+                response = await http_client.get(
+                    url,
+                    params={"limit": 1},
+                    headers=headers
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    # v2 /memory 常见字段是 facts/episodes；v1 /messages 为 messages
+                    return max(
+                        len(data.get("messages", [])),
+                        len(data.get("facts", [])),
+                        len(data.get("episodes", []))
+                    )
+                if response.status_code != 404:
+                    print(f"[WARNING] Failed to check Zep messages ({url}): {response.status_code}")
+                    return 0
+                # 当前探测路径返回 404，继续尝试下一个兼容路径
+                if idx < len(probe_urls) - 1:
+                    continue
+            return 0
     except Exception as e:
         print(f"[ERROR] Failed to check Zep messages: {e}")
         return 0
