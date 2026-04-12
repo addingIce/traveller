@@ -195,7 +195,6 @@ type StorySegment = { type: StorySegmentType; text: string };
 
 const parseStorySegments = (storyText: string): StorySegment[] => {
     if (!storyText) return [];
-    const lines = storyText.split('\n');
     const segments: StorySegment[] = [];
     const tagMap: Record<string, StorySegmentType> = {
         "旁白": "narration",
@@ -204,20 +203,28 @@ const parseStorySegments = (storyText: string): StorySegment[] => {
         "系统": "system"
     };
 
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const match = trimmed.match(/^\[(旁白|对白|心理|系统)\]\s*(.*)$/);
-        if (match) {
-            const segType = tagMap[match[1]] || "narration";
-            const segText = match[2] || "";
-            if (segText) {
-                segments.push({ type: segType, text: segText });
-            }
-        } else {
-            // Default to narration if no tag is present
-            segments.push({ type: "narration", text: trimmed });
+    const tagRegex = /\[(旁白|对白|心理|系统)\]/g;
+    let currentType: StorySegmentType = "narration";
+    let cursor = 0;
+    let match: RegExpExecArray | null;
+
+    while ((match = tagRegex.exec(storyText)) !== null) {
+        const textBeforeTag = storyText.slice(cursor, match.index).trim();
+        if (textBeforeTag) {
+            segments.push({ type: currentType, text: textBeforeTag });
         }
+        currentType = tagMap[match[1]] || "narration";
+        cursor = match.index + match[0].length;
+    }
+
+    const remaining = storyText.slice(cursor).trim();
+    if (remaining) {
+        segments.push({ type: currentType, text: remaining });
+    }
+
+    // Entire text has no recognizable tags
+    if (segments.length === 0 && storyText.trim()) {
+        segments.push({ type: "narration", text: storyText.trim() });
     }
 
     return segments;
