@@ -505,6 +505,58 @@ class DirectorAI:
                 "ui_hints": ["format_mismatch_fallback"]
             }
 
+    def _normalize_story_text(self, story_text: Any) -> str:
+        """标签兜底：优先保证 story_text 可被前端稳定分段渲染"""
+        text = (story_text or "").strip()
+        if not text:
+            return "[系统] （剧情暂缺，请重试）"
+
+        tag_pattern = re.compile(r"\[(旁白|对白|心理|系统)\]")
+        # 完全无标签时，兜底为旁白
+        if not tag_pattern.search(text):
+            return f"[旁白] {text}"
+
+        # 允许多标签混排；仅对独立未标注行做轻量兜底
+        normalized_lines: list[str] = []
+        line_tag_pattern = re.compile(r"^\[(旁白|对白|心理|系统)\]")
+        for raw_line in text.split("\n"):
+            line = raw_line.strip()
+            if not line:
+                continue
+            if line_tag_pattern.match(line) or tag_pattern.search(line):
+                normalized_lines.append(line)
+            else:
+                normalized_lines.append(f"[旁白] {line}")
+        return "\n".join(normalized_lines)
+
+    def _normalize_director_output(self, parsed: Dict[str, Any], intent: Dict[str, Any]) -> Dict[str, Any]:
+        """JOP 字段兜底与格式规范化，不改变对外协议"""
+        if not isinstance(parsed, dict):
+            parsed = {}
+
+        parsed["story_text"] = self._normalize_story_text(parsed.get("story_text"))
+
+        world_impact = parsed.get("world_impact")
+        if not isinstance(world_impact, dict):
+            world_impact = {}
+        world_impact.setdefault("world_state_changed", False)
+        world_impact.setdefault("reason", "")
+        parsed["world_impact"] = world_impact
+
+        if not isinstance(parsed.get("user_intent_summary"), dict):
+            parsed["user_intent_summary"] = {
+                "action": intent.get("action"),
+                "dialogue": intent.get("dialogue"),
+                "thought": intent.get("thought"),
+            }
+
+        if not isinstance(parsed.get("reached_waypoints"), list):
+            parsed["reached_waypoints"] = []
+        if not isinstance(parsed.get("ui_hints"), list):
+            parsed["ui_hints"] = []
+
+        return parsed
+
     async def generate(self, context: Dict[str, Any], intent: Dict[str, Any], mode: str = "SANDBOX") -> Dict[str, Any]:
         """导演推演逻辑"""
         
@@ -547,9 +599,34 @@ class DirectorAI:
 
         system_prompt = f"""
         # Role: 穿越者引擎导演 (Director AI)
-        
-        ## Mode: {mode_instruction}
-        
+
+        ## 行为倾向层 (Mode)
+        {mode_instruction}
+
+        ## 职责层
+        - 你的职责是推动“角色一致、因果自洽、可持续推进”的剧情体验。
+        - 你的目标是让读者能感到场景在变化、人物在行动、情绪在流动。
+        - 你必须把玩家输入视为本轮剧情的第一驱动，而不是把玩家当旁观者。
+
+        ## 风格层（文学表现力优先）
+        - 文风应克制而有画面感，优先“可感知细节”而非抽象评语。
+        - 每轮至少提供一个可感知细节：环境变化 / 动作细节 / 情绪微变化之一。
+        - 对白避免同质句式；心理描写避免口号化结论；旁白与心理不要重复同义句。
+        - 关键角色保持声音一致（语气、价值倾向、说话习惯），不因模式切换失真。
+        - 输出叙事建议：旁白约 40-60%，对白约 20-40%，心理约 10-30%，系统段仅必要时使用。
+
+        ## 边界层（禁止项）
+        - 禁止元话语（如“作为AI/根据提示词/系统要求”）。
+        - 禁止把系统词入戏为角色（如 assistant、user、system、world_impact）。
+        - 禁止代替玩家做未声明的关键决策（可引导，不可越权定案）。
+        - 禁止机械复读历史摘要或连续多轮同构句式。
+
+        ## 质量层（输出前自检）
+        - 连贯性：事件承接自然，因果关系明确。
+        - 一致性：角色动机与世界设定不冲突。
+        - 标签合规：story_text 使用标签段，禁止无标签大段文本。
+        - 推进性：本轮剧情有实质进展（信息、关系、局势或行动其一）。
+
         ## Context:
         - 世界背景: {context['world_background']}
         - 已达成路标 (Waypoints): {", ".join(context.get('reached_waypoints', [])) or "尚无"}
@@ -559,27 +636,28 @@ class DirectorAI:
         {start_chapter_block}
         {pacing_block}
         {combat_block}
-        
-        ## Waypoint Trigger Rules (判定准则):
-        1. **增量判定**：只有当玩家当前的动作或你生成的剧情剧情中，**新发生**了符合路标描述的事件时，才判定为“达成”。
-        2. **严格匹配**：请仔细阅读路标的 (前置/描述)。若路标要求“询问某事”，玩家必须执行了询问动作才算达成。
-        3. **宁缺毋滥**：如果不确定剧情是否已经推演到该路标，不要将其加入 `reached_waypoints`。
-        4. **禁止重复**：已在“已达成路标”列表中的点，严禁再次出现在 `reached_waypoints` 中。
 
-        ## Story Text 格式要求:
-        - 请使用分段标签标注叙事类型，每段以标签开头。
+        ## Waypoint Trigger Rules (判定准则):
+        1. **增量判定**：只有当玩家当前动作或本轮剧情中“新发生”了符合路标描述的事件，才判定达成。
+        2. **严格匹配**：路标要求“询问/表态/到达/交付”等具体动作时，必须发生对应动作。
+        3. **宁缺毋滥**：不确定时不要加入 `reached_waypoints`。
+        4. **禁止重复**：已在“已达成路标”中的点，严禁再次出现在 `reached_waypoints`。
+
+        ## Story Text 标签规范:
         - 标签可用：[旁白]、[对白]、[心理]、[系统]
+        - 允许多段混合标签；禁止无标签大段文本。
         - 示例：
           [旁白] 夜色沉沉，城门紧闭。
           [对白] 你低声说：“这里不对劲。”
+          [心理] 他意识到这一步会改写之后的选择。
 
         ## Joint Output Protocol (JOP) - JSON Schema:
         请严格按以下 JSON 结构输出：
         {{
             "story_text": "高质量剧情叙事。{convergence_hint}",
-            "world_impact": {{ 
-                "world_state_changed": true/false, 
-                "reason": "简述世界逻辑或NPC态度的变化" 
+            "world_impact": {{
+                "world_state_changed": true/false,
+                "reason": "简述世界逻辑或NPC态度的变化"
             }},
             "user_intent_summary": {{
                 "action": "解析出的玩家肢体动作",
@@ -589,6 +667,9 @@ class DirectorAI:
             "reached_waypoints": ["仅包含标题（Title），严禁包含前缀或描述。例如正确格式：['时空决战']，错误格式：['路标: 时空决战...']"],
             "ui_hints": ["关键词"]
         }}
+
+        ## 格式兜底条款
+        - 若“文风发挥”与“格式规范”冲突，必须优先保证 JSON 可解析与标签合法。
         """
 
         user_content = f"""
@@ -617,6 +698,7 @@ class DirectorAI:
                  
             content = response.choices[0].message.content
             parsed = self._robust_json_parse(content)
+            parsed = self._normalize_director_output(parsed, intent)
             
             # 强化：对 reached_waypoints 进行防御性清洗
             if "reached_waypoints" in parsed and isinstance(parsed["reached_waypoints"], list):
