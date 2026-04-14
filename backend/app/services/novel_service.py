@@ -1,11 +1,13 @@
 import re
 import time
 import asyncio
+import json
 import unicodedata
 from datetime import datetime
 from typing import Any
 from zep_python.client import AsyncZep
 from zep_python import Message
+from openai import AsyncOpenAI
 
 def generate_collection_name(title: str) -> str:
     """生成唯一的集合名称"""
@@ -232,6 +234,295 @@ def _split_sentences(text: str) -> list[str]:
     # 支持中文句号、问号、感叹号、英文标点
     sentences = re.split(r'[。！？.!?\n]+', text)
     return [s for s in sentences if s.strip()]
+
+
+WAYPOINT_BLOCKED_TOKENS = {
+    "assistant",
+    "assistant(assistant)",
+    "user",
+    "user(user)",
+    "system",
+    "system(system)",
+    "world_impact",
+    "world_impact(system)",
+}
+
+
+def _normalize_waypoint_title(title: str) -> str:
+    normalized = unicodedata.normalize("NFKC", (title or "").strip())
+    normalized = re.sub(r"^[#\-*\d\.\s]+", "", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()
+    return normalized[:48]
+
+
+def _detect_chapter_titles(content: str, limit: int = 18) -> list[str]:
+    titles: list[str] = []
+    for line in content.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if re.match(r"^第[一二三四五六七八九十百千万零\d]+[章节回部卷].*", text):
+            titles.append(text[:80])
+        elif re.match(r"^Chapter\s+\d+", text, flags=re.IGNORECASE):
+            titles.append(text[:80])
+        if len(titles) >= limit:
+            break
+    return titles
+
+
+def _info_score(chunk: str) -> int:
+    text = chunk or ""
+    punctuation_weight = sum(text.count(c) for c in "。！？!?；;：:") * 2
+    dialogue_weight = sum(text.count(c) for c in "“”\"「」『』")
+    length_weight = min(len(text), 1200) // 20
+    return punctuation_weight + dialogue_weight + length_weight
+
+
+def _sample_waypoint_chunks(chunks: list[str]) -> list[tuple[str, str]]:
+    if not chunks:
+        return []
+    total = len(chunks)
+    selected_indices: set[int] = {0, total - 1, total // 2}
+    scored = sorted(
+        ((idx, _info_score(ch)) for idx, ch in enumerate(chunks) if idx not in selected_indices),
+        key=lambda x: x[1],
+        reverse=True,
+    )
+    for idx, _ in scored[:2]:
+        selected_indices.add(idx)
+
+    labeled: list[tuple[str, str]] = []
+    for idx in sorted(selected_indices):
+        ratio = idx / max(total - 1, 1)
+        if ratio <= 0.2:
+            label = f"开篇片段[{idx + 1}/{total}]"
+        elif ratio >= 0.8:
+            label = f"后段片段[{idx + 1}/{total}]"
+        else:
+            label = f"中段片段[{idx + 1}/{total}]"
+        text = (chunks[idx] or "").strip()[:520]
+        if text:
+            labeled.append((label, text))
+    return labeled
+
+
+def _determine_waypoint_target(total_chunks: int, total_chars: int) -> tuple[int, int, int]:
+    # 动态分档：短篇 4-6，中篇 6-10，长篇 10-14
+    if total_chunks <= 6 or total_chars <= 12000:
+        min_count, max_count = 4, 6
+        target = min(max_count, max(min_count, 4 + total_chunks // 3))
+    elif total_chunks <= 18 or total_chars <= 60000:
+        min_count, max_count = 6, 10
+        target = min(max_count, max(min_count, 6 + total_chunks // 4))
+    else:
+        min_count, max_count = 10, 14
+        target = min(max_count, max(min_count, 10 + total_chunks // 8))
+    return min_count, max_count, target
+
+
+def _parse_waypoint_response(content: str) -> list[dict[str, Any]]:
+    if not content:
+        return []
+    text = content.strip()
+    text = re.sub(r"^```json\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    data: Any
+    try:
+        data = json.loads(text)
+    except Exception:
+        match = re.search(r"(\[.*\])", text, flags=re.DOTALL)
+        if not match:
+            return []
+        try:
+            data = json.loads(match.group(1))
+        except Exception:
+            return []
+    if isinstance(data, dict):
+        data = data.get("waypoints") or data.get("data") or []
+    if not isinstance(data, list):
+        return []
+    return [item for item in data if isinstance(item, dict)]
+
+
+def _sanitize_waypoints(raw_waypoints: list[dict[str, Any]], target_count: int, min_count: int, max_count: int) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+    seen_titles: set[str] = set()
+    banned = {token.lower() for token in WAYPOINT_BLOCKED_TOKENS}
+
+    for item in raw_waypoints:
+        title = _normalize_waypoint_title(str(item.get("title") or ""))
+        if not title:
+            continue
+        title_lower = title.lower()
+        if title_lower in banned or title_lower.startswith("world_impact"):
+            continue
+        if title in seen_titles:
+            continue
+        description = str(item.get("description") or "").strip()[:280]
+        if not description:
+            continue
+        requirement = _normalize_waypoint_title(str(item.get("requirement") or ""))
+        category = str(item.get("category") or "main_quest").strip()[:32] or "main_quest"
+        seen_titles.add(title)
+        cleaned.append(
+            {
+                "title": title,
+                "description": description,
+                "requirement": requirement or None,
+                "category": category,
+            }
+        )
+
+    # 根据目标规模截断
+    if len(cleaned) > max_count:
+        cleaned = cleaned[:max_count]
+    if len(cleaned) > target_count:
+        cleaned = cleaned[:target_count]
+
+    # 若数量不足，补最小可用路标，保证新小说“有路标”
+    fallback_titles = ["故事开局", "矛盾升级", "关键转折", "阶段收束", "新线索出现", "代价浮现"]
+    idx = 0
+    while len(cleaned) < min_count and idx < len(fallback_titles):
+        title = fallback_titles[idx]
+        idx += 1
+        if title in seen_titles:
+            continue
+        cleaned.append(
+            {
+                "title": title,
+                "description": f"围绕“{title}”推进剧情，并让玩家的选择产生可见后果。",
+                "requirement": cleaned[-1]["title"] if cleaned else None,
+                "category": "main_quest",
+            }
+        )
+        seen_titles.add(title)
+
+    # 规范 order 与 requirement（仅允许引用前序）
+    title_order: list[str] = []
+    normalized: list[dict[str, Any]] = []
+    for order, item in enumerate(cleaned, start=1):
+        requirement = item.get("requirement")
+        if requirement and requirement not in title_order:
+            requirement = None
+        normalized.append(
+            {
+                "title": item["title"],
+                "description": item["description"],
+                "requirement": requirement,
+                "order": order,
+                "category": item.get("category") or "main_quest",
+            }
+        )
+        title_order.append(item["title"])
+    return normalized
+
+
+async def _generate_waypoints_with_llm(
+    novel_title: str,
+    content: str,
+    chunks: list[str],
+    total_chunks: int,
+    runtime_config,
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
+    total_chars = len(content or "")
+    min_count, max_count, target_count = _determine_waypoint_target(total_chunks, total_chars)
+    chapter_titles = _detect_chapter_titles(content)
+    sampled_chunks = _sample_waypoint_chunks(chunks)
+
+    sample_parts: list[str] = []
+    for label, text in sampled_chunks:
+        sample_parts.append(f"[{label}]\n{text}")
+    sampled_text = "\n\n".join(sample_parts)[:3800]
+    chapter_text = "；".join(chapter_titles[:14])[:900] if chapter_titles else "无明显章节标题"
+
+    llm_api_key = (runtime_config.api.llm_api_key or "").strip()
+    llm_base_url = (runtime_config.api.llm_base_url or "https://api.openai.com/v1").strip()
+    llm_model = (runtime_config.api.model_director or runtime_config.api.llm_model or "gpt-4o").strip()
+    client = AsyncOpenAI(api_key=llm_api_key or "not-needed", base_url=llm_base_url)
+
+    prompt = f"""
+你是小说策划编辑。请基于给定的“章节骨架 + 分层采样片段”，为该小说生成主干剧情路标。
+
+要求：
+1) 路标数量在 {min_count}-{max_count} 条，目标约 {target_count} 条。
+2) 覆盖阶段：开局 / 推进 / 转折 / 收束，不可全部集中在前半段。
+3) requirement 只能引用前面已出现的 title；不能引用未来路标。
+4) title 要可执行、短而清晰；description 描述可观察事件，不写空话。
+5) 禁止出现 assistant/user/system/world_impact 等系统词。
+6) 仅输出 JSON 数组，不要额外解释。
+
+小说标题：{novel_title}
+总片段数：{total_chunks}
+章节骨架：{chapter_text}
+
+分层采样片段：
+{sampled_text}
+
+输出格式：
+[
+  {{
+    "title": "路标标题",
+    "requirement": "前置路标标题或空字符串",
+    "description": "该路标达成时应发生的事件",
+    "order": 1,
+    "category": "opening/progression/turning/closing/main_quest"
+  }}
+]
+""".strip()
+
+    response = await client.chat.completions.create(
+        model=llm_model,
+        temperature=0.3,
+        messages=[
+            {"role": "system", "content": "你是严谨的剧情策划助手，只返回合法 JSON。"},
+            {"role": "user", "content": prompt},
+        ],
+    )
+    raw_content = ""
+    if response.choices and response.choices[0].message and response.choices[0].message.content:
+        raw_content = response.choices[0].message.content
+    parsed = _parse_waypoint_response(raw_content)
+    sanitized = _sanitize_waypoints(parsed, target_count, min_count, max_count)
+    stats = {
+        "min_count": min_count,
+        "max_count": max_count,
+        "target_count": target_count,
+        "generated_count": len(sanitized),
+    }
+    return sanitized, stats
+
+
+async def _persist_waypoints(
+    collection_name: str,
+    neo4j_driver,
+    waypoints: list[dict[str, Any]],
+) -> None:
+    if not neo4j_driver:
+        return
+    async with neo4j_driver.session() as session:
+        # 同 group_id 全量替换，避免重复污染
+        await session.run(
+            "MATCH (w:Waypoint {group_id: $group_id}) DETACH DELETE w",
+            group_id=collection_name,
+        )
+        for wp in waypoints:
+            await session.run(
+                """
+                MERGE (w:Waypoint {group_id: $group_id, title: $title})
+                SET w.requirement = $requirement,
+                    w.description = $description,
+                    w.order = $order,
+                    w.category = $category,
+                    w.created_at = coalesce(w.created_at, $created_at)
+                """,
+                group_id=collection_name,
+                title=wp["title"],
+                requirement=wp.get("requirement"),
+                description=wp.get("description"),
+                order=wp.get("order"),
+                category=wp.get("category", "main_quest"),
+                created_at=datetime.utcnow().isoformat(),
+            )
 
 
 def _normalize_entity_name(name: str) -> str:
@@ -969,7 +1260,29 @@ async def process_novel_task(
                 status_store[collection_name]["eta_seconds"] = int(eta)
             
             await asyncio.sleep(batch_delay)
-        
+
+        # 分块写入成功后立即生成路标（失败不阻塞主链路）
+        if neo4j_driver:
+            try:
+                waypoints, wp_stats = await _generate_waypoints_with_llm(
+                    novel_title=novel_title,
+                    content=content,
+                    chunks=chunks,
+                    total_chunks=total_chunks,
+                    runtime_config=runtime_config,
+                )
+                if waypoints:
+                    await _persist_waypoints(collection_name, neo4j_driver, waypoints)
+                    print(
+                        f"[INFO] Generated waypoints for {collection_name}: "
+                        f"{wp_stats['generated_count']} "
+                        f"(range={wp_stats['min_count']}-{wp_stats['max_count']}, target={wp_stats['target_count']})"
+                    )
+                else:
+                    print(f"[WARNING] Generated zero waypoints for {collection_name}, skipping persistence")
+            except Exception as waypoint_error:
+                print(f"[WARNING] Waypoint generation failed for {collection_name}: {waypoint_error}")
+
         # 写入完成，直接进入实体提取阶段
         status_store[collection_name]["status"] = "extracting"
         status_store[collection_name]["stage"] = "extracting"

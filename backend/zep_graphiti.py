@@ -453,6 +453,10 @@ class ResilientOpenAIClient(OpenAIClient):
                                                 new_items.append(item)
                                                 continue
                                             cleaned = {k: v for k, v in item.items() if k in schema_fields}
+                                            # Pydantic ExtractedEntity 要求 name 必填；缺失则直接丢弃，避免整体失败
+                                            if not str(cleaned.get('name') or '').strip():
+                                                logger.warning(f"Dropping invalid extracted entity without name: {item}")
+                                                continue
                                             # 强制 entity_id 为 int
                                             if 'entity_id' in cleaned:
                                                 try: cleaned['entity_id'] = int(cleaned['entity_id'])
@@ -477,6 +481,9 @@ class ResilientOpenAIClient(OpenAIClient):
                                                 new_items.append(item)
                                                 continue
                                             cleaned = {k: v for k, v in item.items() if k in schema_fields}
+                                            if not str(cleaned.get('name') or '').strip():
+                                                logger.warning(f"Dropping invalid extracted entity without name: {item}")
+                                                continue
                                             if 'entity_id' in cleaned:
                                                 try: cleaned['entity_id'] = int(cleaned['entity_id'])
                                                 except (ValueError, TypeError): cleaned['entity_id'] = 0
@@ -560,6 +567,7 @@ class ResilientOpenAIClient(OpenAIClient):
                 mapping = {
                     # 字段名映射（叶节点）
                     'entity': 'name',
+                    'entity_text': 'name',
                     'node': 'name',
                     'entity_name': 'name',
                     'node_name': 'name',
@@ -595,6 +603,11 @@ class ResilientOpenAIClient(OpenAIClient):
             # 修复 ValidationError: entity_type_id 缺失
             # 如果检测到实体对象但缺少 entity_type_id，自动添加默认值 0
             if 'entity_id' in new_dict or 'name' in new_dict:
+                # 某些模型会返回 text 字段表示实体名，兜底映射为 name
+                if ('name' not in new_dict or not str(new_dict.get('name') or '').strip()) and 'text' in new_dict:
+                    fallback_name = str(new_dict.get('text') or '').strip()
+                    if fallback_name:
+                        new_dict['name'] = fallback_name
                 if 'entity_type_id' not in new_dict:
                     logger.warning(f"Adding missing entity_type_id to entity: {new_dict.get('name', 'unknown')}")
                     new_dict['entity_type_id'] = 0
