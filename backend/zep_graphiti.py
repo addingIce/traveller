@@ -412,7 +412,9 @@ class ResilientOpenAIClient(OpenAIClient):
 - DO NOT extract trivial or obvious relationships (e.g., "A stood next to B", "A saw B").
 - AVOID redundant relationships. If a relationship is already implied or stated, do not extract it again.
 - Preferred relations: Family (father/son), Sect/Organization (disciple/master), Emotions (love/hate), Plot-driven (enemies/allies).
-- BE CONCISE in fact descriptions. Use "A is B's teacher" instead of "A spent many years teaching B the way of the sword"."""
+- BE CONCISE in fact descriptions. Use "A is B's teacher" instead of "A spent many years teaching B the way of the sword".
+- CRITICAL: relation_type MUST be a short Chinese phrase (2-8 Chinese chars), e.g. "要求完成", "帮助修复", "表示赞赏".
+- NEVER use pinyin, ALL_CAPS tokens, or underscore style such as "YAQIU_WANCHENG_JINJI_XIANGMU"."""
 
                             combined_rules = lang_rule + id_rule + entity_type_rule + duplicate_rule + exclusion_rule + strict_entity_rule + strict_relationship_rule
                             
@@ -586,6 +588,12 @@ class ResilientOpenAIClient(OpenAIClient):
                     'target_node_id': 'target_entity_id',
                     'source_entity': 'source_entity_id',
                     'target_entity': 'target_entity_id',
+                    'subject_entity_id': 'source_entity_id',
+                    'object_entity_id': 'target_entity_id',
+                    # 关系抽取常见嵌套写法（subject/object）映射
+                    # 后续会在 id_field 归一化阶段把 dict 提取为整数 id
+                    'subject': 'source_entity_id',
+                    'object': 'target_entity_id',
                     # 顶层 key 映射（DeepSeek 常用 vs Graphiti 期望）
                     'entities': 'extracted_entities',
                     'edges': 'edges',
@@ -661,6 +669,18 @@ class ResilientOpenAIClient(OpenAIClient):
                         except (TypeError, ValueError):
                             logger.warning(f"Invalid {id_field} value: {val}, setting to 0")
                             new_dict[id_field] = 0
+
+            # 关系名兜底：中文事实下，若 relation_type 是拼音/英文样式（如 ALL_CAPS_XXX），统一回退中文名
+            relation_type = new_dict.get('relation_type')
+            fact_text = str(new_dict.get('fact') or '')
+            if isinstance(relation_type, str):
+                rt = relation_type.strip()
+                has_zh_fact = re.search(r'[\u4e00-\u9fff]', fact_text) is not None
+                has_zh_rt = re.search(r'[\u4e00-\u9fff]', rt) is not None
+                looks_ascii_token = re.fullmatch(r'[A-Za-z0-9_\- ]+', rt) is not None
+                if has_zh_fact and rt and (not has_zh_rt) and looks_ascii_token:
+                    logger.warning(f"Normalizing non-Chinese relation_type '{rt}' to '相关'")
+                    new_dict['relation_type'] = '相关'
             
             return new_dict
         return data
